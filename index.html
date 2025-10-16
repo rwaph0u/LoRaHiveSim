@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LoRaHiveSim v0.2.0 — LoRa Mesh Playground</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <div id="sidebar">
+    <div class="header">
+      <h2 id="appTitle">LoRaHiveSim <span id="appVersion" class="subtle">v0.2.0</span></h2>
+      <div class="lang">
+        <label for="langSelect" id="langLabel">Language</label>
+        <select id="langSelect">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+        </select>
+      </div>
+    </div>
+
+    <h3 data-i18n="palette">Palette</h3>
+    <div class="item rucherItem" draggable="true" data-type="hive" data-i18n="addHive">+ Hive</div>
+    <div class="item obstacleItem" draggable="true" data-type="obstacle" data-i18n="addObstacle">+ Obstacle</div>
+
+    <div class="btnbar">
+      <button id="focusServerBtn" class="accent" data-i18n="focusServer">Focus server</button>
+      <button id="measureToggleBtn" class="info" data-i18n="measure">Measure distance</button>
+    </div>
+
+    <div id="measurePanel" class="hint" style="display:none;">
+      <div data-i18n="measureHint">Click two nodes/points on the canvas to measure. ESC to cancel.</div>
+      <div id="measureResult" class="small"></div>
+      <button id="measureClearBtn" class="ghost" data-i18n="clear">Clear</button>
+    </div>
+
+    <h4 class="section-title" data-i18n="obstacleContext">Obstacle (context)</h4>
+    <div class="hint" id="obCtxHint" data-i18n="obstacleContextHint">No obstacle selected → these settings will be used when adding a new obstacle.</div>
+    <div class="row">
+      <label id="lblRadius" data-i18n="radiusDefault">Radius (default)</label>
+      <input id="obsRadius" type="range" value="40" min="5" max="240" step="1">
+      <input id="obsRadiusNum" type="number" value="40" min="5" max="240" step="1">
+    </div>
+    <div class="row">
+      <label id="lblLoss" data-i18n="lossDefault">Loss (default)</label>
+      <input id="obsLoss" type="range" value="0.5" min="0" max="0.95" step="0.01">
+      <input id="obsLossNum" type="number" value="0.5" min="0" max="0.95" step="0.01">
+    </div>
+
+    <h4 class="section-title" data-i18n="loraParams">LoRa Parameters (global)</h4>
+    <div class="row">
+      <label>SF</label>
+      <input id="sfInput" type="number" value="7" min="7" max="12" step="1">
+      <span class="small subtle">[7..12]</span>
+    </div>
+    <div class="row">
+      <label>BW</label>
+      <select id="bwInput">
+        <option value="500">500 kHz</option>
+        <option value="250">250 kHz</option>
+        <option value="125" selected>125 kHz</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>CR</label>
+      <select id="crInput">
+        <option value="5" selected>4/5</option>
+        <option value="6">4/6</option>
+        <option value="7">4/7</option>
+        <option value="8">4/8</option>
+      </select>
+    </div>
+    <div class="row">
+      <label data-i18n="mpp">Meters / pixel</label>
+      <input id="mppInput" type="number" value="2" min="0.01" step="0.01">
+    </div>
+    <div class="row">
+      <label data-i18n="realistic">Realistic path-loss</label>
+      <input id="realisticChk" type="checkbox" checked>
+    </div>
+    <div class="row">
+      <label data-i18n="freqMHz">Freq (MHz)</label>
+      <input id="freqInput" type="number" value="868" min="100" max="10000" step="1">
+    </div>
+    <div class="row">
+      <label data-i18n="txDbm">TX power (dBm)</label>
+      <input id="txDbmInput" type="number" value="14" min="0" max="22" step="1">
+    </div>
+    <div class="small hint" data-i18n="loraHint">These parameters adjust range and sensitivity. Visual wave radius follows realistic range when enabled.</div>
+
+    <h4 class="section-title" data-i18n="selection">Selection</h4>
+    <div id="noSelection" class="hint" data-i18n="noSelection">— Click a hive or obstacle on the canvas to select —</div>
+
+    <div id="selHivePanel" style="display:none;">
+      <div class="row"><label data-i18n="type">Type</label><div data-i18n="typeHive">Hive</div></div>
+      <div class="row"><label>ID</label><div id="selHiveId">—</div></div>
+      <div class="row">
+        <label data-i18n="txPower">TX Power (visual)</label>
+        <input id="txPower" type="range" value="1" min="0.2" max="2" step="0.1">
+        <input id="txPowerNum" type="number" value="1" min="0.2" max="2" step="0.1">
+      </div>
+      <div class="hint" data-i18n="txHint">This visual TX scales wave alpha; dBm is used when Realistic mode is ON.</div>
+    </div>
+
+    <div class="btnbar">
+      <button id="deleteBtn" class="danger" data-i18n="deleteSelection">Delete selection</button>
+      <button id="resetBtn" class="secondary" data-i18n="resetAll">Reset all</button>
+    </div>
+
+    <h4 class="section-title" data-i18n="stats">Stats</h4>
+    <div class="btnbar">
+      <button id="resetStatsBtn" class="ghost" data-i18n="resetStats">Reset stats</button>
+      <button id="copyShareUrlBtn" class="warn" data-i18n="copyShareLink">Copy share link</button>
+      <button id="loadFromUrlBtn" class="ghost" data-i18n="loadFromUrl">Load from URL</button>
+    </div>
+    <pre id="statsPre"></pre>
+
+    <h4 class="section-title" data-i18n="logs">Logs</h4>
+    <pre id="logs"></pre>
+
+    <h4 class="section-title" data-i18n="debug">Debug</h4>
+    <pre id="debugLogs"></pre>
+
+    <h4 class="section-title" data-i18n="state">State</h4>
+    <pre id="state"></pre>
+
+    <div class="accordion" id="impExpAcc" style="margin-top:10px;">
+      <div id="accHeader" class="accordion-header">
+        <span data-i18n="importExport">📦 Import / Export</span>
+        <span class="chev">▶</span>
+      </div>
+      <div id="accBody" class="accordion-body">
+        <div class="btnbar">
+          <button id="exportBtn" class="accent" data-i18n="exportFile">Export JSON (file)</button>
+          <button id="exportToZoneBtn" class="info" data-i18n="exportToZone">Export → area</button>
+          <button id="copyExportBtn" class="ghost" data-i18n="copyExport">Copy export</button>
+          <button id="importBtn" class="success" data-i18n="importFile">Import JSON (file)</button>
+          <input id="importFile" type="file" accept="application/json" style="display:none;">
+        </div>
+        <div class="small hint" data-i18n="importHint">Tolerant import: unknown properties ignored, invalid values corrected.</div>
+
+        <div class="grid-2" style="margin-top:8px;">
+          <div>
+            <h4 class="section-title" data-i18n="exportAreaTitle">Export Area (read-only)</h4>
+            <textarea id="exportArea" readonly placeholder="Click 'Export → area' to see JSON here."></textarea>
+          </div>
+          <div>
+            <h4 class="section-title" data-i18n="importAreaTitle">Import Area (paste JSON)</h4>
+            <textarea id="importArea" placeholder="Paste JSON here then click 'Import from area'."></textarea>
+            <div class="btnbar">
+              <button id="importFromZoneBtn" class="success" data-i18n="importFromArea">Import from area</button>
+              <button id="clearImportBtn" class="ghost" data-i18n="clear">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="accordion" id="geoAcc" style="margin-top:10px;">
+      <div id="geoHeader" class="accordion-header">
+        <span data-i18n="geoTitle">🌍 Geo Import (experimental)</span>
+        <span class="chev">▶</span>
+      </div>
+      <div id="geoBody" class="accordion-body">
+        <div class="row">
+          <label data-i18n="originLat">Origin lat</label><input id="geoLat" type="number" value="48.8566" step="0.0001">
+        </div>
+        <div class="row">
+          <label data-i18n="originLon">Origin lon</label><input id="geoLon" type="number" value="2.3522" step="0.0001">
+        </div>
+        <div class="row">
+          <label data-i18n="metersPerPx">Meters per pixel</label><input id="geoMPP" type="number" value="2" step="0.1">
+        </div>
+        <div class="small hint" data-i18n="geoHint">Paste simple GeoJSON (Polygons/Points). Points become hives or server if name='server'. Polygons become obstacles with property 'loss' [0..0.95].</div>
+        <textarea id="geoJsonArea" placeholder='{"type":"FeatureCollection","features":[...]}'></textarea>
+        <div class="btnbar">
+          <button id="loadGeoBtn" class="accent" data-i18n="loadGeo">Load GeoJSON</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="playground">
+    <canvas id="simCanvas" width="1000" height="640"></canvas>
+
+    <div id="minimapWrap">
+      <div id="minimapTitle" data-i18n="minimapTitle">Mini-map (click/drag to navigate)</div>
+      <canvas id="minimap" width="220" height="128"></canvas>
+    </div>
+
+    <div id="hintOverlay" data-i18n="hintOverlay">Space / right / middle click: pan — Wheel: zoom</div>
+  </div>
+
+  <script>window.APP_VERSION = "0.2.0";</script>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
