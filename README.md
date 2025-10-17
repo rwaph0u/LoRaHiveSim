@@ -1,184 +1,214 @@
-# 🐝 LoRaHiveSim v0.2.1
+# LoRaHiveSim — v1.0.0
 
-**LoRaHiveSim** is an interactive web simulator of **LoRa mesh communication** between hives and a central server.  
-It visualizes **DATA** and **ACK** waves, **relay propagation**, and **obstacle attenuation** — useful for learning, testing, or teaching how LoRa multi-hop networks behave.
-
----
-
-## 🌍 Overview
-
-- Language auto-detection (English/French) + manual selector.
-- Realistic mode based on actual LoRa parameters (FSPL, sensitivity, TX power).
-- Configurable obstacles with adjustable size and signal loss.
-- Multi-hop relays (DATA → ACK) with TTL and retransmission.
-- Pan/zoom, mini-map, measurement tool, import/export, and GeoJSON integration.
-- France configuration (868 MHz) enabled by default.
+> **LoRa mesh playground** with a realistic radio model (FSPL + LoRa sensitivity), obstacles, minimap, import/export, distance measurement, sharable simulation state via URL, and full bilingual UI (EN/FR).  
+> License: **MIT**
 
 ---
 
-## ⚙️ Default configuration (France)
+## 🚀 Overview
 
-| Parameter | Value | Description |
-|------------|--------|-------------|
-| Frequency | **868 MHz** | EU LoRa band |
-| TX Power | **14 dBm** | EU max EIRP |
-| Bandwidth | **125 kHz** | Standard narrowband |
-| Spreading Factor | **7** | Adjustable 7–12 |
-| Coding Rate | **4/5** | Typical value |
-| Meters / pixel | **2** | For distance scaling |
-| Realistic path-loss | ✅ Enabled | FSPL + sensitivity model |
+LoRaHiveSim simulates **LoRa packet propagation** between **hives (nodes)** and a **central server**, including **relay** logic and **ACK** returns.  
+When **realistic mode** is enabled, range is computed from **path loss (FSPL)** and **receiver sensitivity**, then converted to pixels via _Meters per pixel_.  
+**Obstacles** locally attenuate the signal by sector, possibly blocking communication.
 
-Resulting theoretical free-space range (no obstacle):
-
-| SF | Sensitivity (dBm, BW125) | Range (m) |
-|----|---------------------------|-----------|
-| 7  | −123 | ≈ 3 km |
-| 8  | −126 | ≈ 4.6 km |
-| 9  | −129 | ≈ 6.6 km |
-| 10 | −132 | ≈ 9.3 km |
-| 11 | −134.5 | ≈ 12 km |
-| 12 | −137 | ≈ 16.7 km |
+- **Version**: 1.0.0 (SemVer)
+- **Languages**: English / French (auto-detected, can be switched)
+- **License**: MIT
 
 ---
 
-## 🧮 Radio model (Realistic mode)
+## 🗂️ Files & Installation
 
-When “Realistic path-loss” is enabled, each transmission follows a **link budget** check:
+No build needed — just open `index.html` in any modern browser (Chrome, Edge, Firefox).
 
 ```
-FSPL(dB) = 32.44 + 20*log10(f_MHz) + 20*log10(d_km)
-Rx = Tx - FSPL - Obstacles_dB
+index.html
+styles.css
+app.js
+i18n.js
 ```
 
-Reception succeeds if:
+> Free hosting suggestions: GitHub Pages, Netlify, or Vercel (drag-and-drop deployment).
 
+---
+
+## ✨ Features
+
+- **Wave propagation** of DATA and ACK messages, with relay and TTL.
+- **Realistic mode** using FSPL + LoRa sensitivity (SF/BW) and TX power (default 10 dBm @ 868 MHz).
+- **Progressive acceleration** — waves start slowly and reach their full realistic range in exactly **10 seconds** with smooth acceleration curve.
+- **Obstacles** (circular and polygonal), draggable/resizable (mouse wheel), adjustable attenuation (Shift + wheel).  
+  Darker color = higher loss. Polygonal obstacles preserve their original shape from GeoJSON import.
+- **Infinite canvas** with smooth **pan/zoom**.
+- **Mini-map** for fast navigation.
+- **Distance measurement tool** (px ↔ m) and **“Focus server”** shortcut.
+- **Import/Export JSON**, **shareable URLs**, and **GeoJSON** (points → nodes/server, polygons → realistic polygon obstacles).
+- **Real-time stats**: delivery rate, hops, latency, relays, losses.
+- **Smart ACK handling**: nodes only relay ACKs for others, not their own.
+
+---
+
+## 🕹️ Controls
+
+- **Add**: drag “+ Hive” or “+ Obstacle” from the palette to the canvas.
+- **Move**: drag & drop (node or obstacle).
+- **Send data**: click a hive → emits DATA (server replies with ACK if received).
+- **Obstacle selected**:
+  - Scroll = radius; **Shift + scroll = loss**.
+  - Or use the sliders/inputs in the left panel.
+- **Pan**: spacebar / middle + drag / right + drag.  
+  **Zoom**: mouse wheel (centered on cursor).
+- **Measure**: click “Measure distance”, then click **two points** (ESC cancels).
+- **Delete**: Delete/Backspace or “Delete selection” button.
+- **Reset**: “Reset all” button (clears the board).
+- **Focus**: “Focus server” recenters and scales to show the server.
+
+---
+
+## ⚙️ LoRa Parameters (European defaults)
+
+| Parameter | Description          | Default         |
+| --------- | -------------------- | --------------- |
+| Frequency | MHz                  | 868             |
+| TX Power  | dBm                  | 10              |
+| SF        | Spreading Factor     | 7–12            |
+| BW        | Bandwidth            | 125/250/500 kHz |
+| CR        | Coding Rate          | 4/5–4/8         |
+| Meters/px | Scale world ↔ screen | 2 m/px          |
+
+> Visual radius corresponds to realistic range scaled by _Meters / px_.  
+> Max render radius: **200 000 px**.
+
+### Realistic model (simplified)
+
+- **Sensitivity (dBm)** ≈  
+  SF7:-118, SF8:-121, SF9:-124, SF10:-127, SF11:-129.5, SF12:-132  
+  (+3 dB for 250 kHz, +6 dB for 500 kHz).  
+  _Values account for real-world conditions and implementation losses._
+- **FSPL(dB)** = 32.44 + 20·log₁₀(f_MHz) + 20·log₁₀(d_km).
+- Reception occurs when **Rx ≥ Sensitivity**, with `Rx = TX_dBm – FSPL – Obstacle_dB`.
+- **Obstacles** apply directional attenuation (product of losses across affected sectors).  
+  High-loss obstacles (>90%) add 60dB penalty, effectively blocking communication.
+
+### Progressive Acceleration
+
+Waves use a **3-phase acceleration curve** over exactly 10 seconds:
+
+- **Phase 1 (0-2s)**: Very slow start for immediate visual feedback
+- **Phase 2 (2-6s)**: Gradual acceleration with quartic easing
+- **Phase 3 (6-10s)**: Smooth completion to full range
+
+This ensures consistent timing regardless of range while providing natural visual progression.
+
+---
+
+## 🧱 Obstacles (Circular & Polygonal)
+
+- **Circular obstacles**: Create by dragging from palette, resize with mouse wheel, adjust loss with Shift+wheel.
+- **Polygonal obstacles**: Created from GeoJSON import, preserve original shape and can be dragged to move.
+- **No obstacle selected** → the panel defines **default values** for new circular obstacles.
+- **Obstacle selected** → the panel edits **that obstacle** (circular only for resize/loss controls).
+- **Color** → darker means stronger attenuation (loss 0..0.95).
+- **Propagation**: Polygonal obstacles apply uniform attenuation when waves intersect their shape.
+
+---
+
+## 🔁 Import / Export
+
+### Export
+
+- **JSON file** → “Export JSON (file)” → `lorahivesim.json`
+- **To text area** → “Export → area” (copy/paste).
+- **Share link** → “Copy share link” (encodes full state in URL hash).
+
+### Import
+
+- From **file** or **area** (tolerant to unknown/invalid properties).
+- **GeoJSON**: FeatureCollection with _Point_ and _Polygon_ geometries.
+  - _Point_ → hive/server (`properties.name === "server"` → central server).
+  - _Polygon_ → **realistic polygonal obstacle** preserving original shape with `properties.loss` ∈ [0..0.95].
+  - Uses "Origin lat/lon" + "Meters per pixel" to convert to canvas coordinates.
+
+**Example:**
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [2.3522, 48.8566] },
+      "properties": { "name": "server" }
+    },
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [2.3622, 48.8569] },
+      "properties": { "name": "hive" }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [2.35, 48.857],
+            [2.355, 48.857],
+            [2.355, 48.859],
+            [2.35, 48.859],
+            [2.35, 48.857]
+          ]
+        ]
+      },
+      "properties": { "loss": 0.6 }
+    }
+  ]
+}
 ```
-Rx >= Sensitivity(SF,BW)
-```
 
-### Sensitivity reference (approximate)
-
-| SF | 125 kHz | 250 kHz | 500 kHz |
-|----|----------|----------|----------|
-| 7  | −123 | −120 | −117 |
-| 8  | −126 | −123 | −120 |
-| 9  | −129 | −126 | −123 |
-| 10 | −132 | −129 | −126 |
-| 11 | −134.5 | −131.5 | −128.5 |
-| 12 | −137 | −134 | −131 |
+> Upon import, the view automatically **fits** and **focuses on the server**.
 
 ---
 
-## 🌊 Visual vs. Physical signal
+## 📊 Statistics
 
-| Component | Affected by obstacles? | Description |
-|------------|------------------------|--------------|
-| **Visual wave (circle)** | ❌ No | Free-space theoretical radius (FSPL + sensitivity). Always circular. |
-| **Reception logic** | ✅ Yes | Each target checks line-of-sight intersection with obstacles; losses (0–0.95) are applied as attenuation (in dB). |
-| **Logs / ACKs / Relays** | ✅ Yes | Events occur only if the link budget passes. |
-| **Wave opacity / shape** | ❌ No (for now) | May become direction-dependent in future versions. |
-
-👉 The visual wave shows where the signal *could* go if no obstacle blocked it.  
-👉 The reception logic determines where the signal *actually* goes.
+- `DATA sent` — total DATA transmissions.
+- `To server` — unique DATA packets received by the server.
+- `ACK to origin` — ACKs returned to the originating hive (% success).
+- `Relayed DATA/ACK` — number of forwarded packets.
+- `TTL drops`, `Shadow drops` (signal reached but not decodable), `Dup ignored`.
+- `Avg hops`, `Avg latency` — average hops and round-trip time.
 
 ---
 
-## 🧱 Obstacles
+## 🧭 Distance Measurement
 
-- Each obstacle has:
-  - a **radius** (editable via slider or wheel),
-  - a **loss factor** between **0 → no attenuation** and **0.95 → almost opaque**.
-- Loss is internally converted to dB:
-  ```
-  loss_dB = -10 * log10(1 - loss)
-  ```
-- Multiple obstacles on the same path accumulate their loss.
-- Obstacles only affect **signal reception**, not the wave rendering (for performance and clarity).
+Click “Measure distance”, then two points: result shows both **pixels** and **meters**.  
+Nodes snap automatically if near cursor.
 
 ---
 
-## 📏 Measurement Tool
+## 🔧 Troubleshooting
 
-- Activate with **“Measure distance”**.
-- Click two points (snaps to hives/server) to measure.
-- Displays both **pixels** and **meters** using the current “Meters / pixel” scale.
-- Press **ESC** to cancel, or **Clear** to reset.
-
----
-
-## 📡 Import / Export
-
-- **Export JSON (file)** — download simulation state.  
-- **Export → area / Copy** — copy JSON to clipboard.  
-- **Import JSON / from area** — load saved configuration.  
-- Unknown or deprecated properties are safely ignored.  
-- **Share link** encodes the state in the URL hash (`#data=`).
+- **Waves too slow/fast** → All waves now take exactly 10 seconds with progressive acceleration for consistent timing.
+- **Missing ACK** → Check LoRa parameters, obstacles, and _Meters / px_ scale.
+- **Too much loss** → Reduce `loss` or resize/reposition the obstacle.
+- **GeoJSON import** → Ensure valid FeatureCollection, correct geometry types and properties.
 
 ---
 
-## 🌍 GeoJSON Import (experimental)
+## 🗺️ Roadmap Ideas
 
-- Paste a **GeoJSON FeatureCollection** containing:
-  - **Points** → Hives (or Server if `properties.name === "server"`),
-  - **Polygons** → Obstacles (use `properties.loss` ∈ [0..0.95]).
-- Configure **origin latitude/longitude** and **meters per pixel**.
-- Upon import, the view automatically **fits** the area and **focuses** on the server.
+- Non-circular / polygonal obstacles, terrain & Fresnel zone.
+- Noise, fading, duty-cycle and temporal collisions.
+- Coverage heatmaps & path-loss visualization.
 
 ---
 
-## 🧭 Navigation
+## 📝 Changelog
 
-| Action | Description |
-|---------|-------------|
-| Left-click hive | Send DATA |
-| Click obstacle | Select and edit |
-| Drag element | Move it |
-| Right/Middle click or Space + drag | Pan |
-| Mouse wheel | Zoom |
-| Mini-map click/drag | Reposition camera |
+- **1.0.0** — **First stable release**: Complete LoRa mesh simulation with realistic radio model, polygonal obstacles, progressive wave acceleration, smart ACK handling, and comprehensive GeoJSON support.
+- **0.3.0** — Progressive wave acceleration (exactly 10s), realistic LoRa parameters, improved obstacle blocking, fixed ACK relay logic, **polygonal obstacles** from GeoJSON with realistic shape preservation.
+- **0.2.x** — Realistic mode, obstacle sectors, import/export, GeoJSON, minimap, distance tool, i18n.
+- **0.1.x** — Initial prototype with relay and ACK simulation.
 
 ---
-
-## 🧩 Data & ACK flow
-
-1. Hive sends **DATA** (blue wave).  
-2. Intermediate hives **relay** DATA if in range.  
-3. Server receives DATA → sends **ACK** (orange wave).  
-4. ACK relayed back until origin hive receives it.  
-5. Each wave has a **TTL** limiting retransmission hops.  
-6. **Logs** record all transmissions; **stats** track success rates and latency.
-
----
-
-## 🧠 Terminology & Acronyms
-
-| Acronym | Meaning | Role |
-|----------|----------|------|
-| **FSPL** | Free-Space Path Loss | Attenuation over distance |
-| **SF** | Spreading Factor | Increases range, reduces bitrate |
-| **BW** | Bandwidth | Wider = faster but less sensitive |
-| **CR** | Coding Rate | Error correction ratio |
-| **TX** | Transmission Power (dBm) | Source strength |
-| **RX** | Received Power (dBm) | After propagation and losses |
-| **EIRP** | Equivalent Isotropic Radiated Power | TX + antenna gain − cable loss |
-| **LoS** | Line of Sight | Unobstructed path between nodes |
-| **TTL** | Time To Live | Max relay depth for DATA/ACK |
-
----
-
-## 🧾 License
-
-MIT License  
-Copyright (c) 2025 LoRaHiveSim Contributors  
-SPDX-License-Identifier: MIT
-
----
-
-## 🧱 Version
-
-Current version: **v0.2.1**
-
-Changelog:
-- v0.1.x — base features, obstacles, stats, import/export, GeoJSON.  
-- v0.2.0 — realistic range (FSPL-based visual), France defaults (868 MHz).  
-- v0.2.1 — improved documentation and obstacle behavior clarification.

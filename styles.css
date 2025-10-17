@@ -1,4 +1,3 @@
-
 body { font-family: sans-serif; display: flex; margin: 0; }
 #sidebar { width: 620px; background: #ddd; padding: 10px; box-sizing: border-box; }
 #playground { flex: 1; background: #f4f4f4; position: relative; overflow: hidden; }
