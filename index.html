@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>LoRaHiveSim v1.3.1 — LoRa Mesh Playground</title>
+  <title>LoRaHiveSim v1.3.2 — LoRa Mesh Playground</title>
   <link rel="stylesheet" href="styles.css"/>
   <meta name="description" content="LoRaHiveSim — interactive LoRa mesh playground with realistic path-loss, obstacles, import/export, minimap, and measurement tools.">
 </head>
 <body>
   <div id="sidebar">
     <div class="header">
-      <h2 id="appTitle">LoRaHiveSim <span id="appVersion" class="subtle">v1.0.0</span></h2>
+      <h2 id="appTitle">LoRaHiveSim <span id="appVersion" class="subtle">v1.3.2</span></h2>
       <div class="lang">
-        <label for="langSelect" id="langLabel">Language</label>
+        <label for="langSelect" id="langLabel" data-i18n="Language">Language</label>
         <select id="langSelect">
           <option value="en">English</option>
           <option value="fr">Français</option>
@@ -110,7 +110,7 @@
     </div>
     <div class="row">
       <label data-i18n="maxAttenuationDb">Max attenuation (dB)</label>
-      <input id="maxAttenuationInput" type="number" value="40" min="20" max="80" step="5">
+      <input id="maxAttenuationInput" type="number" value="35" min="20" max="80" step="5">
     </div>
     <div class="row">
       <label data-i18n="debugAngle">Debug angle calculations (v1.3.1)</label>
@@ -266,7 +266,7 @@
     <div id="hintOverlay" data-i18n="hintOverlay">Space / right / middle click: pan — Wheel: zoom</div>
   </div>
 
-  <script>window.APP_VERSION = "1.3.1";</script>
+  <script>window.APP_VERSION = "1.3.2";</script>
   <script src="i18n.js"></script>
   <script src="spatial-index.js"></script>
   <script src="app.js"></script>

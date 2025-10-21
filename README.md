@@ -1,4 +1,4 @@
-# LoRaHiveSim — v1.3.1
+# LoRaHiveSim — v1.3.2
 
 > **LoRa mesh playground** with a realistic radio model (FSPL + LoRa sensitivity), **realistic material-based obstacles**, minimap, import/export, distance measurement, sharable simulation state via URL, and full bilingual UI (EN/FR).  
 > License: **MIT**
@@ -11,7 +11,7 @@ LoRaHiveSim simulates **LoRa packet propagation** between **hives (nodes)** and 
 When **realistic mode** is enabled, range is computed from **path loss (FSPL)** and **receiver sensitivity**, then converted to pixels via _Meters per pixel_.  
 **Obstacles** locally attenuate the signal by sector, possibly blocking communication.
 
-- **Version**: 1.3.1 (SemVer)
+- **Version**: 1.3.2 (SemVer)
 - **Languages**: English / French (auto-detected, can be switched)
 - **License**: MIT
 
@@ -240,6 +240,7 @@ Nodes snap automatically if near cursor.
 
 ## 📝 Changelog
 
+- **1.3.2** — **Attenuation Calibration Fix**: Corrected material coefficients with EU868-calibrated values (water: 2.0→1.0, brick: 0.5→0.35) to prevent excessive signal loss. Fixed legacy attenuation model to avoid repetitive \*= application that caused over-attenuation even with very low k values. Added ALPHA_MIN visibility floor and reduced MAX_OBSTACLE_DB to 35 dB for better visual clarity. Improved simulation realism and material accuracy.
 - **1.3.1** — **Angle/Sector Mapping Fix**: Critical bug fix where obstacle attenuation appeared 180° opposite to actual obstacle position. Standardized angle calculations with `angleFromWaveTo()` and `sectorIndexFromAngle()` functions, removed erroneous +Math.PI rotation, replaced Math.round() with Math.floor() for consistent sector bucketing. Improved visual accuracy and obstacle alignment.
 - **1.3.0** — **Realistic Cumulative Attenuation Model**: Complete rewrite of signal attenuation using cumulative path lengths through obstacles. Fixes excessive signal extinction and improves physical accuracy with metric-consistent calculations. Enhanced material coefficients calibrated for 868 MHz, proper wood/forest distinction, and sector-based debugging tools.
 - **1.2.0** — **Realistic material-based obstacles**: Exponential attenuation model with 8 material types (concrete, brick, wood, glass, metal, vegetation, water, earth). Physics-based RF propagation with material-specific alpha coefficients and color-coded visualization.

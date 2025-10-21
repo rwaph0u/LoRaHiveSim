@@ -1,4 +1,4 @@
-const APP_VERSION = window.APP_VERSION || "1.3.1";
+const APP_VERSION = window.APP_VERSION || "1.3.2";
 
 // --- DOM ---
 const canvas = document.getElementById("simCanvas");
@@ -137,23 +137,24 @@ function sectorIndexFromAngle(theta, SECTORS) {
   return Math.floor(theta * SECTORS / TWO_PI) % SECTORS;
 }
 
-// --- Material system for realistic obstacle attenuation (v1.3.0) ---
+// --- Material system for realistic obstacle attenuation (v1.3.2 Calibrated EU868) ---
 const MATERIALS = {
-  'brick': { alpha: 0.5, color: '#964B00', name: '🧱 Brick', loss_db: 4.3 },
-  'concrete': { alpha: 0.8, color: '#505050', name: '� Concrete', loss_db: 6.9 },
-  'forest': { alpha: 0.2, color: '#007800', name: '🌲 Forest', loss_db: 1.7 },
-  'field': { alpha: 0.05, color: '#B4FF78', name: '🌾 Field', loss_db: 0.4 },
-  'water': { alpha: 2.0, color: '#0064FF', name: '💧 Water', loss_db: 17.4 },
+  'brick': { alpha: 0.35, color: '#964B00', name: '🧱 Brick', loss_db: 3.0 },
+  'concrete': { alpha: 0.70, color: '#505050', name: '🏢 Concrete', loss_db: 6.1 },
+  'forest': { alpha: 0.20, color: '#007800', name: '🌲 Forest', loss_db: 1.7 },
+  'field': { alpha: 0.00001, color: '#B4FF78', name: '🌾 Field', loss_db: 0.0001 },
+  'water': { alpha: 1.00, color: '#0064FF', name: '💧 Water', loss_db: 8.7 },
   'rock': { alpha: 1.2, color: '#787878', name: '🪨 Rock', loss_db: 10.4 },
   'urban_mix': { alpha: 0.6, color: '#C8C8C8', name: '🏘️ Urban', loss_db: 5.2 },
-  'metal': { alpha: 1.5, color: '#9696B4', name: '� Metal', loss_db: 13.0 },
-  'wood': { alpha: 0.35, color: '#8B4513', name: '🌳 Wood', loss_db: 3.0 },
+  'metal': { alpha: 1.20, color: '#9696B4', name: '🔩 Metal', loss_db: 10.4 },
+  'wood': { alpha: 0.30, color: '#8B4513', name: '🌳 Wood', loss_db: 2.6 },
   'sand': { alpha: 0.1, color: '#F4A460', name: '🏖️ Sand', loss_db: 0.9 },
   'default': { alpha: 0.25, color: '#C8C8C8', name: '❓ Default', loss_db: 2.2 }
 };
 
-// Constants for realistic attenuation model (v1.3.0)
-let MAX_OBSTACLE_DB = 40;   // cap per sector for visibility (adjustable)
+// Constants for realistic attenuation model (v1.3.2)
+let MAX_OBSTACLE_DB = 35;   // cap per sector for visual clarity (v1.3.2 recommended)
+let ALPHA_MIN = 0.08;       // minimum alpha floor for visibility (v1.3.2)
 let useCumulativeAttenuation = true;  // Toggle for v1.3.0 model
 
 function getMaterialAlpha(material) {
@@ -602,11 +603,11 @@ function updateWaves(){
         const k = 0.25; // Average attenuation coefficient
         const dB = Math.min(MAX_OBSTACLE_DB, 8.686 * k * L);
         const linearFactor = Math.pow(10, -dB / 10);
-        o.alphaSectors[s] = Math.max(0.02, linearFactor); // Clamp for visibility
+        o.alphaSectors[s] = Math.max(ALPHA_MIN, linearFactor); // v1.3.2 visibility clamp
       }
       } // Close r1 > r0 condition
     } else {
-      // Legacy attenuation model (v1.2.0 fallback)
+      // Legacy attenuation model (v1.2.0 fallback) - Fixed v1.3.2 to avoid *= repetition
       const waveRadius = o.r;
       const waveBounds = {
         minX: o.x - waveRadius, minY: o.y - waveRadius,
@@ -614,16 +615,21 @@ function updateWaves(){
       };
       const nearbyObstacles = spatialIndex.query(waveBounds);
       
+      // Initialize path lengths if not present (legacy compatibility)
+      if (!o.pathMeters) {
+        o.pathMeters = new Float32Array(SECTORS).fill(0);
+      }
+      
       for (const ob of nearbyObstacles) {
         if (o.obstacleApplied.has(ob.id)) continue;
         
         const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'default');
-        const d_meters = (ob.radius || 10) * metersPerPixel;
-        const attenuation_factor = Math.exp(-k * d_meters);
+        const d_meters = (ob.radius || 10) * metersPerPixel; // Convert once
         
         if (ob.type === 'polygon') {
+          // Simple approximation for polygons in legacy mode
           for (let i = 0; i < SECTORS; i++) {
-            o.alphaSectors[i] *= attenuation_factor;
+            o.pathMeters[i] += d_meters * 0.5; // Rough estimate
           }
         } else {
           const d = dist(o, ob);
@@ -631,12 +637,22 @@ function updateWaves(){
             const th = angle(o.x, o.y, ob.x, ob.y);
             const sinArg = Math.min(1, Math.max(-1, ob.radius / d));
             const half = Math.asin(sinArg);
+            const chordApprox = ob.radius * 2; // Diameter approximation
             for (const i of sectorRange(th - half, th + half)) {
-              o.alphaSectors[i] *= attenuation_factor;
+              o.pathMeters[i] += chordApprox * metersPerPixel;
             }
           }
         }
         o.obstacleApplied.add(ob.id);
+      }
+      
+      // Recompute alphas from total path lengths (fixes v1.3.2 *= bug)
+      for (let s = 0; s < SECTORS; s++) {
+        const L = o.pathMeters[s];
+        const k = 0.25; // Default coefficient for legacy mode
+        const dB = Math.min(MAX_OBSTACLE_DB, 8.686 * k * L);
+        const linearFactor = Math.pow(10, -dB / 10);
+        o.alphaSectors[s] = Math.max(ALPHA_MIN, linearFactor); // v1.3.2 visibility clamp
       }
     }
 
@@ -871,7 +887,7 @@ function drawWaves(){
       const a1 = (i + 1) * TWO_PI / SECTORS;
       
       const eff = o.alpha * o.alphaSectors[i]; 
-      if (eff <= 0.02) continue; // Skip extremely weak sectors
+      if (eff <= ALPHA_MIN) continue; // Skip extremely weak sectors (v1.3.2)
       
       const s = w2s(o.x, o.y);
       ctx.beginPath(); 
