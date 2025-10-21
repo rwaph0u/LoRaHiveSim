@@ -1,4 +1,4 @@
-const APP_VERSION = window.APP_VERSION || "1.0.0";
+const APP_VERSION = window.APP_VERSION || "1.2.0";
 
 // --- DOM ---
 const canvas = document.getElementById("simCanvas");
@@ -27,11 +27,13 @@ const measureClearBtn = document.getElementById("measureClearBtn");
 // Panels
 const obCtxHint = document.getElementById("obCtxHint");
 const lblRadius = document.getElementById("lblRadius");
-const lblLoss = document.getElementById("lblLoss");
+const lblLoss = document.getElementById("lblAbsorption");
 const obsRadiusInput = document.getElementById("obsRadius");
 const obsRadiusNum   = document.getElementById("obsRadiusNum");
-const obsLossInput   = document.getElementById("obsLoss");
-const obsLossNum     = document.getElementById("obsLossNum");
+const obsLossInput   = document.getElementById("obsAbsorption");
+const obsLossNum     = document.getElementById("obsAbsorptionNum");
+const obsMaterial    = document.getElementById("obsMaterial");
+const selObsMaterial = document.getElementById("selObsMaterial");
 
 const noSelection = document.getElementById("noSelection");
 const selHivePanel = document.getElementById("selHivePanel");
@@ -73,6 +75,10 @@ const geoBody = document.getElementById("geoBody");
 const geoLat = document.getElementById("geoLat");
 const geoLon = document.getElementById("geoLon");
 const geoMPP = document.getElementById("geoMPP");
+const geoOptimize = document.getElementById("geoOptimize");
+const geoTolerance = document.getElementById("geoTolerance");
+const geoProgress = document.getElementById("geoProgress");
+const geoProgressText = document.getElementById("geoProgressText");
 const geoJsonArea = document.getElementById("geoJsonArea");
 const loadGeoBtn = document.getElementById("loadGeoBtn");
 
@@ -84,6 +90,11 @@ document.querySelector('.obstacleItem').addEventListener('dragstart', startDrag)
 let hives = [];
 let obstacles = []; // {id,x,y,radius,loss} for circles OR {id,type:'polygon',points:[{x,y}...],loss,bounds:{minX,minY,maxX,maxY}} for polygons
 const server = { x: 450, y: 280, id: "Central Server", txPowerDbm: 14 };
+
+// --- Performance Optimization ---
+let spatialIndex = new SpatialIndex();
+let geoWorker = null;
+let path2DCache = new Map(); // Cache for Path2D objects
 
 // Visual engine
 let waveSpeed = 3;
@@ -105,6 +116,52 @@ let realistic = true;   // enabled by default
 
 const SECTORS = 72;
 const SECTOR_RAD = (2*Math.PI)/SECTORS;
+
+// --- Material system for realistic obstacle attenuation ---
+const MATERIALS = {
+  'brick': { alpha: 0.35, color: '#964B00', name: '🧱 Brick', loss_db: 1.5 },
+  'concrete': { alpha: 1.15, color: '#505050', name: '� Concrete', loss_db: 5.0 },
+  'forest': { alpha: 0.15, color: '#007800', name: '🌲 Forest', loss_db: 0.65 },
+  'field': { alpha: 0.03, color: '#B4FF78', name: '🌾 Field', loss_db: 0.13 },
+  'water': { alpha: 3.0, color: '#0064FF', name: '💧 Water', loss_db: 13.0 },
+  'rock': { alpha: 1.8, color: '#787878', name: '🪨 Rock', loss_db: 7.8 },
+  'urban_mix': { alpha: 0.25, color: '#C8C8C8', name: '🏘️ Urban', loss_db: 1.1 },
+  'metal': { alpha: 2.5, color: '#9696B4', name: '� Metal', loss_db: 10.8 },
+  'wood': { alpha: 0.05, color: '#8B4513', name: '🌳 Wood', loss_db: 0.2 },
+  'sand': { alpha: 0.08, color: '#F4A460', name: '🏖️ Sand', loss_db: 0.35 },
+  'default': { alpha: 0.1, color: '#C8C8C8', name: '❓ Default', loss_db: 0.43 }
+};
+
+function getMaterialAlpha(material) {
+  return MATERIALS[material]?.alpha || 0.6; // Default alpha if material not found (brick)
+}
+
+function getMaterialColor(material) {
+  return MATERIALS[material]?.color || '#C8C8C8'; // Default color if material not found
+}
+
+// --- GeoJSON to Material Mapping ---
+function mapGeoFeatureToMaterial(props) {
+  const materialMap = [
+    { key: "building", match: /industrial|warehouse|bunker/, material: "concrete", k: 1.15 },
+    { key: "building", match: /yes|house|residential|commercial/, material: "brick", k: 0.35 },
+    { key: "landuse", match: /forest|wood|scrub/, material: "forest", k: 0.15 },
+    { key: "landuse", match: /grass|meadow|pasture|farmland/, material: "field", k: 0.03 },
+    { key: "natural", match: /water|wetland|river|lake/, material: "water", k: 3.0 },
+    { key: "natural", match: /rock|mountain/, material: "rock", k: 1.8 },
+    { key: "landuse", match: /urban|residential/, material: "urban_mix", k: 0.25 },
+    { key: "landuse", match: /military/, material: "metal", k: 2.5 },
+    { key: "landuse", match: /cemetery|park/, material: "wood", k: 0.05 },
+    { key: "natural", match: /sand|beach/, material: "sand", k: 0.08 },
+  ];
+  
+  for (const m of materialMap) {
+    if (props[m.key] && m.match.test(props[m.key])) {
+      return { material: m.material, k: m.k };
+    }
+  }
+  return { material: "default", k: 0.1 };
+}
 
 let waves = [];
 let seqCounter = 1;
@@ -196,6 +253,89 @@ function obstacleContainsPoint(obstacle, x, y) {
     const dy = y - obstacle.y;
     return (dx * dx + dy * dy) <= (obstacle.radius * obstacle.radius);
   }
+}
+
+// --- Performance Optimization Functions ---
+function addObstaclesBatch(batch) {
+  for (const item of batch) {
+    if (item.type === 'point') {
+      const { x, y, properties } = item;
+      if ((properties.name || '').toLowerCase() === 'server') {
+        server.x = x;
+        server.y = y;
+      } else {
+        const nh = {
+          x, y,
+          id: `Hive ${hives.length + 1}`,
+          txPower: 1,
+          seenData: new Set(),
+          seenAck: new Set(),
+          ackPulses: [],
+          txPowerDbm: txDbmDefault
+        };
+        hives.push(nh);
+        spatialIndex.add(nh);
+      }
+    } else if (item.type === 'polygon') {
+      const { points, properties, material, k } = item;
+      
+      if (points.length >= 3) {
+        const bounds = getPolygonBounds(points);
+        const absorption = properties.absorption ? clamp(+properties.absorption, 0.00001, 5) : k;
+        const loss = properties.loss ? clamp(+properties.loss, 0, 0.95) : absorption * 0.1;
+        
+        const no = {
+          id: obsCounter++,
+          type: 'polygon',
+          points,
+          loss,
+          absorption,
+          bounds,
+          material,
+          k
+        };
+        
+        obstacles.push(no);
+        spatialIndex.add(no);
+        
+        debug(`Added polygon: material=${material}, α=${absorption.toFixed(3)}, vertices=${points.length}`);
+      }
+    }
+  }
+  stateDirty = true;
+}
+
+function createPath2D(obstacle) {
+  if (obstacle.type === 'polygon') {
+    const path = new Path2D();
+    const points = obstacle.points;
+    if (points.length > 0) {
+      const first = w2s(points[0].x, points[0].y);
+      path.moveTo(first.x, first.y);
+      for (let i = 1; i < points.length; i++) {
+        const p = w2s(points[i].x, points[i].y);
+        path.lineTo(p.x, p.y);
+      }
+      path.closePath();
+    }
+    return path;
+  } else {
+    // Circular obstacle
+    const path = new Path2D();
+    const s = w2s(obstacle.x, obstacle.y);
+    const r = obstacle.radius * camera.scale;
+    path.arc(s.x, s.y, r, 0, Math.PI * 2);
+    return path;
+  }
+}
+
+function getViewport() {
+  return {
+    minX: camera.x,
+    minY: camera.y,
+    maxX: camera.x + canvas.width / camera.scale,
+    maxY: camera.y + canvas.height / camera.scale
+  };
 }
 
 // --- Realistic radio helpers ---
@@ -341,8 +481,17 @@ function updateWaves(){
     o.lastUpdateTime = currentTime;
 
 
-    // obstacles → sector attenuation
-    for (const ob of obstacles){
+    // obstacles → sector attenuation (optimized with spatial index)
+    const waveRadius = o.r;
+    const waveBounds = {
+      minX: o.x - waveRadius,
+      minY: o.y - waveRadius,
+      maxX: o.x + waveRadius,
+      maxY: o.y + waveRadius
+    };
+    const nearbyObstacles = spatialIndex.query(waveBounds);
+    
+    for (const ob of nearbyObstacles){
       if (o.obstacleApplied.has(ob.id)) continue;
       
       if (ob.type === 'polygon') {
@@ -406,20 +555,37 @@ function updateWaves(){
         }
         
         if (intersects) {
-          // Apply loss to all sectors (uniform attenuation for polygon)
+          // Realistic material-based exponential attenuation for polygon
+          const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'brick');
+          
+          // Calculate approximate distance inside obstacle (rough estimate using bounds)
+          const bounds = ob.bounds;
+          const d_inside = Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.5; // Approximate thickness
+          const d_meters = d_inside * metersPerPixel; // Convert to meters
+          
+          // Apply exponential attenuation: sectorAlpha *= exp(-k * d_meters)
+          const attenuation_factor = Math.exp(-k * d_meters);
+          
           for (let i = 0; i < SECTORS; i++) {
-            o.alphaSectors[i] *= (1 - ob.loss);
+            o.alphaSectors[i] *= attenuation_factor;
           }
           o.obstacleApplied.add(ob.id);
         }
       } else {
-        // Circular obstacle (existing logic)
+        // Circular obstacle with realistic material-based attenuation
         const d = dist(o,ob); if (d<=1e-6) continue;
         if (o.r >= d - ob.radius){
           const th = angle(o.x,o.y,ob.x,ob.y);
           const sinArg = Math.min(1, Math.max(-1, ob.radius / d));
           const half = Math.asin(sinArg);
-          for (const i of sectorRange(th-half, th+half)) o.alphaSectors[i] *= (1 - ob.loss);
+          
+          // Material-based exponential attenuation
+          const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'brick');
+          const d_inside = ob.radius * 2; // Diameter as rough estimate of distance through obstacle
+          const d_meters = d_inside * metersPerPixel; // Convert to meters
+          const attenuation_factor = Math.exp(-k * d_meters);
+          
+          for (const i of sectorRange(th-half, th+half)) o.alphaSectors[i] *= attenuation_factor;
           o.obstacleApplied.add(ob.id);
         }
       }
@@ -537,13 +703,39 @@ function drawStatic(){
     }
   }
 
-  // obstacles
-  for (const ob of obstacles){
-    const alpha = Math.max(0.1, Math.min(0.9, 0.15 + ob.loss*0.7));
-    const strokeAlpha = Math.max(0.3,Math.min(0.9,0.4+ob.loss*0.4));
+  // obstacles (optimized rendering with spatial culling)
+  const viewport = getViewport();
+  const visibleObstacles = spatialIndex.query(viewport);
+  
+  for (const ob of visibleObstacles){
+    // Skip tiny obstacles when zoomed out (LOD)
+    const screenSize = ob.type === 'polygon' ? 
+      Math.min((ob.bounds.maxX - ob.bounds.minX), (ob.bounds.maxY - ob.bounds.minY)) * camera.scale :
+      ob.radius * 2 * camera.scale;
+    
+    if (screenSize < 2) continue; // Skip if smaller than 2px
+    
+    // Use material-based colors and transparency
+    const material = ob.material || 'concrete';
+    const materialColor = getMaterialColor(material);
+    const materialAlpha = getMaterialAlpha(material);
+    
+    // Convert hex color to RGB for rgba formatting
+    const hexToRgb = (hex) => {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : {r: 102, g: 102, b: 102}; // Default gray
+    };
+    
+    const rgb = hexToRgb(materialColor);
+    const alpha = Math.max(0.3, Math.min(0.8, 0.4 + materialAlpha * 0.1)); // Base transparency
+    const strokeAlpha = Math.max(0.5, Math.min(1.0, alpha + 0.2));
     
     if (ob.type === 'polygon') {
-      // Draw polygon obstacle
+      // Draw polygon obstacle with cached path for performance
       ctx.beginPath();
       const firstPoint = w2s(ob.points[0].x, ob.points[0].y);
       ctx.moveTo(firstPoint.x, firstPoint.y);
@@ -552,34 +744,44 @@ function drawStatic(){
         ctx.lineTo(point.x, point.y);
       }
       ctx.closePath();
-      ctx.fillStyle=`rgba(60,60,60,${alpha})`; ctx.fill();
+      ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+      ctx.fill();
       ctx.lineWidth=Math.max(1,1*camera.scale);
-      ctx.strokeStyle=`rgba(40,40,40,${strokeAlpha})`; ctx.stroke();
+      ctx.strokeStyle=`rgba(${Math.max(0,rgb.r-40)},${Math.max(0,rgb.g-40)},${Math.max(0,rgb.b-40)},${strokeAlpha})`;
+      ctx.stroke();
       
       if (selected && selected.type==='obstacle' && selected.ref===ob){
         ctx.lineWidth=Math.max(1,3*camera.scale);
         ctx.strokeStyle='rgba(0,120,255,0.9)'; ctx.stroke();
       }
       
-      // Label
-      const centerX = (ob.bounds.minX + ob.bounds.maxX) / 2;
-      const centerY = (ob.bounds.minY + ob.bounds.maxY) / 2;
-      const labelPos = w2s(centerX, centerY);
-      ctx.fillStyle='#000'; ctx.font=`${12*camera.scale}px sans-serif`; 
-      ctx.fillText(`Obs ${ob.id} (loss ${ob.loss.toFixed(2)})`, labelPos.x-50*camera.scale, labelPos.y-6*camera.scale);
+      // Label with material name (only if obstacle is large enough)
+      if (screenSize > 30) {
+        const centerX = (ob.bounds.minX + ob.bounds.maxX) / 2;
+        const centerY = (ob.bounds.minY + ob.bounds.maxY) / 2;
+        const labelPos = w2s(centerX, centerY);
+        ctx.fillStyle='#000'; ctx.font=`${12*camera.scale}px sans-serif`; 
+        ctx.fillText(`Obs ${ob.id} (${MATERIALS[material]?.name || material})`, labelPos.x-50*camera.scale, labelPos.y-6*camera.scale);
+      }
     } else {
-      // Draw circular obstacle (existing code)
+      // Draw circular obstacle
       const s=w2s(ob.x,ob.y); const r=ob.radius*camera.scale;
       ctx.beginPath(); ctx.arc(s.x,s.y,r,0,Math.PI*2);
-      ctx.fillStyle=`rgba(60,60,60,${alpha})`; ctx.fill();
+      ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+      ctx.fill();
       ctx.lineWidth=Math.max(1,1*camera.scale);
-      ctx.strokeStyle=`rgba(40,40,40,${strokeAlpha})`; ctx.stroke();
+      ctx.strokeStyle=`rgba(${Math.max(0,rgb.r-40)},${Math.max(0,rgb.g-40)},${Math.max(0,rgb.b-40)},${strokeAlpha})`;
+      ctx.stroke();
       if (selected && selected.type==='obstacle' && selected.ref===ob){
         ctx.beginPath(); ctx.arc(s.x,s.y,r+4,0,Math.PI*2);
         ctx.strokeStyle='rgba(0,120,255,0.9)'; ctx.lineWidth=Math.max(1,2*camera.scale); ctx.stroke();
       }
-      ctx.fillStyle='#000'; ctx.font=`${12*camera.scale}px sans-serif`; 
-      ctx.fillText(`Obs ${ob.id} (loss ${ob.loss.toFixed(2)})`, s.x-r, s.y-r-6);
+      
+      // Label (only if obstacle is large enough)
+      if (screenSize > 30) {
+        ctx.fillStyle='#000'; ctx.font=`${12*camera.scale}px sans-serif`; 
+        ctx.fillText(`Obs ${ob.id} (${MATERIALS[material]?.name || material})`, s.x-r, s.y-r-6);
+      }
     }
   }
 
@@ -824,8 +1026,16 @@ canvas.addEventListener('dragover', e=>{ e.preventDefault(); });
 canvas.addEventListener('drop', e=>{
   e.preventDefault(); const rect=canvas.getBoundingClientRect(); const s={x:e.clientX-rect.left, y:e.clientY-rect.top}; const m=s2w(s.x,s.y);
   const type=e.dataTransfer.getData('text/plain');
-  if (type==='hive'){ const nh={x:m.x,y:m.y,id:`Hive ${hives.length+1}`,txPower:1,seenData:new Set(),seenAck:new Set(),ackPulses:[], txPowerDbm: txDbmDefault}; hives.push(nh); setSelected({type:'hive', ref:nh}); stateDirty=true; }
-  else if (type==='obstacle'){ const r=clamp(Number(obsRadiusInput.value)||40,5,240); const loss=clamp(Number(obsLossInput.value)||0.5,0,0.95); const no={id:obsCounter++,x:m.x,y:m.y,radius:r,loss}; obstacles.push(no); setSelected({type:'obstacle', ref:no}); stateDirty=true; }
+  if (type==='hive'){ const nh={x:m.x,y:m.y,id:`Hive ${hives.length+1}`,txPower:1,seenData:new Set(),seenAck:new Set(),ackPulses:[], txPowerDbm: txDbmDefault}; hives.push(nh); spatialIndex.add(nh); setSelected({type:'hive', ref:nh}); stateDirty=true; }
+  else if (type==='obstacle'){ 
+    const r=clamp(Number(obsRadiusInput.value)||40,5,240); 
+    const absorption=clamp(Number(obsLossInput.value)||0.35,0.00001,5); 
+    const material = obsMaterial?.value || 'brick'; // Get selected material
+    const no={id:obsCounter++,x:m.x,y:m.y,radius:r,loss:absorption*0.1,absorption,material,k:absorption}; 
+    obstacles.push(no); 
+    spatialIndex.add(no);
+    setSelected({type:'obstacle', ref:no}); stateDirty=true; 
+  }
 });
 
 // Selection & panels
@@ -835,13 +1045,24 @@ function setSelected(sel){
   if (!selected || selected.type!=='obstacle'){
     obCtxHint.textContent = STRINGS[currentLang].obstacleContextHint;
     lblRadius.textContent = STRINGS[currentLang].radiusDefault;
-    lblLoss.textContent = STRINGS[currentLang].lossDefault;
+    lblLoss.textContent = STRINGS[currentLang].absorptionDefault || "Absorption coeff. (default)";
   } else {
     obCtxHint.textContent = `${STRINGS[currentLang].obstacleContextHint.split(' →')[0]} — editing obstacle ID ${selected.ref.id}`;
     lblRadius.textContent = STRINGS[currentLang].radiusSelected;
-    lblLoss.textContent = STRINGS[currentLang].lossSelected;
+    lblLoss.textContent = STRINGS[currentLang].absorptionSelected || "Absorption coeff. (selected)";
     obsRadiusInput.value = obsRadiusNum.value = selected.ref.radius;
-    obsLossInput.value   = obsLossNum.value   = selected.ref.loss;
+    obsLossInput.value   = obsLossNum.value   = selected.ref.absorption || selected.ref.k || selected.ref.loss || 0.35;
+    // Set material dropdowns if obstacle has a material
+    if (obsMaterial && selected.ref.material) {
+      obsMaterial.value = selected.ref.material;
+    }
+    if (selObsMaterial && selected.ref.material) {
+      selObsMaterial.value = selected.ref.material;
+    }
+    // Also update selection panel material dropdown
+    if (selObsMaterial && selected.ref.material) {
+      selObsMaterial.value = selected.ref.material;
+    }
   }
   if (!selected || selected.type!=='hive'){ selHivePanel.style.display='none'; noSelection.style.display=''; }
   else { noSelection.style.display='none'; selHivePanel.style.display=''; selHiveId.textContent=selected.ref.id; txPower.value=txPowerNum.value=selected.ref.txPower ?? 1; }
@@ -849,10 +1070,84 @@ function setSelected(sel){
 // Obstacle merged apply
 function syncPair(r,n,apply){ function fr(){ const v=Number(r.value); n.value=v; apply(v);} function fn(){ const v=Number(n.value); r.value=v; apply(v);} r.addEventListener('input',fr); n.addEventListener('input',fn); }
 function applyObstacleRadius(v,delta=false){ if (selected && selected.type==='obstacle'){ let nv=delta?selected.ref.radius+v:v; selected.ref.radius=clamp(nv,5,240); obsRadiusInput.value=obsRadiusNum.value=selected.ref.radius; stateDirty=true; } else { let nv=delta?(Number(obsRadiusInput.value)||40)+v:v; nv=clamp(nv,5,240); obsRadiusInput.value=obsRadiusNum.value=nv; } }
-function applyObstacleLoss(v,delta=false){ if (selected && selected.type==='obstacle'){ let nv=delta?selected.ref.loss+v:v; selected.ref.loss=clamp(nv,0,0.95); obsLossInput.value=obsLossNum.value=selected.ref.loss; stateDirty=true; } else { let nv=delta?(Number(obsLossInput.value)||0.5)+v:v; nv=clamp(nv,0,0.95); obsLossInput.value=obsLossNum.value=nv; } }
+function applyObstacleLoss(v,delta=false){ 
+  if (selected && selected.type==='obstacle'){ 
+    let nv=delta?selected.ref.absorption+v:v; 
+    selected.ref.absorption=clamp(nv,0.00001,5); 
+    obsLossInput.value=obsLossNum.value=selected.ref.absorption; 
+    stateDirty=true; 
+  } else { 
+    let nv=delta?(Number(obsLossInput.value)||0.35)+v:v; 
+    nv=clamp(nv,0.00001,5); 
+    obsLossInput.value=obsLossNum.value=nv; 
+  } 
+}
+function applyObstacleMaterial(material){ 
+  // Update the absorption coefficient based on material
+  const alpha = getMaterialAlpha(material);
+  obsLossInput.value = obsLossNum.value = alpha;
+  
+  if (selected && selected.type==='obstacle'){ 
+    selected.ref.material=material; 
+    selected.ref.absorption=alpha;
+    stateDirty=true; 
+  } 
+}
 syncPair(obsRadiusInput,obsRadiusNum, v=>applyObstacleRadius(v,false));
 syncPair(obsLossInput,obsLossNum, v=>applyObstacleLoss(v,false));
 syncPair(txPower,txPowerNum, v=>{ if(selected?.type==='hive'){ selected.ref.txPower=clamp(v,0.2,2); statsDirty=true; } });
+
+// Material selection event listener with automatic absorption update
+if (obsMaterial) {
+  obsMaterial.addEventListener('change', () => {
+    const material = obsMaterial.value;
+    applyObstacleMaterial(material);
+    
+    // Auto-update absorption coefficient based on material
+    const alpha = getMaterialAlpha(material);
+    obsLossInput.value = obsLossNum.value = alpha;
+    
+    // Apply to selected obstacle if any
+    if (selected && selected.type === 'obstacle') {
+      selected.ref.absorption = alpha;
+      selected.ref.k = alpha;
+      stateDirty = true;
+    }
+  });
+}
+
+// Selection panel material dropdown event listener
+if (selObsMaterial) {
+  selObsMaterial.addEventListener('change', () => {
+    const material = selObsMaterial.value;
+    if (selected && selected.type === 'obstacle') {
+      selected.ref.material = material;
+      selected.ref.absorption = getMaterialAlpha(material);
+      selected.ref.k = selected.ref.absorption;
+      stateDirty = true;
+    }
+  });
+}
+
+// Initialize absorption coefficient based on default material
+if (obsMaterial && obsLossInput && obsLossNum) {
+  const defaultMaterial = obsMaterial.value || 'brick';
+  const defaultAlpha = getMaterialAlpha(defaultMaterial);
+  obsLossInput.value = obsLossNum.value = defaultAlpha;
+}
+
+// Selection panel material change listener
+if (selObsMaterial) {
+  selObsMaterial.addEventListener('change', () => {
+    if (selected && selected.type === 'obstacle') {
+      const material = selObsMaterial.value;
+      const alpha = getMaterialAlpha(material);
+      selected.ref.material = material;
+      selected.ref.absorption = alpha;
+      stateDirty = true;
+    }
+  });
+}
 
 // Measure tool helpers
 function findSnapPoint(m){
@@ -875,12 +1170,12 @@ function updateMeasureResult(){
 }
 
 // Delete & reset
-function deleteSelection(){ if(!selected)return; if(selected.type==='obstacle'){ obstacles=obstacles.filter(o=>o!==selected.ref);} else if(selected.type==='hive'){ hives=hives.filter(h=>h!==selected.ref);} setSelected(null); stateDirty=true; }
+function deleteSelection(){ if(!selected)return; if(selected.type==='obstacle'){ obstacles=obstacles.filter(o=>o!==selected.ref); spatialIndex.remove(selected.ref); path2DCache.delete(selected.ref.id);} else if(selected.type==='hive'){ hives=hives.filter(h=>h!==selected.ref); spatialIndex.remove(selected.ref);} setSelected(null); stateDirty=true; }
 if (deleteBtn) deleteBtn.addEventListener('click', deleteSelection);
 window.addEventListener('keydown', e=>{ if((e.key==='Delete'||e.key==='Backspace')&&selected){ e.preventDefault(); deleteSelection(); } });
 function resetStats(){ for (const k in stats) stats[k]=0; emittedAt.clear(); statsDirty=true; }
 resetStatsBtn.addEventListener('click', resetStats);
-function resetBoard(){ hives=[]; obstacles=[]; waves=[]; serverSeen.clear(); emittedAt.clear(); seqCounter=1; obsCounter=1; setSelected(null); logs.textContent=''; debugLogs.textContent=''; camera.x=0; camera.y=0; camera.scale=1; resetStats(); stateDirty=true; }
+function resetBoard(){ hives=[]; obstacles=[]; waves=[]; spatialIndex.clear(); path2DCache.clear(); serverSeen.clear(); emittedAt.clear(); seqCounter=1; obsCounter=1; setSelected(null); logs.textContent=''; debugLogs.textContent=''; camera.x=0; camera.y=0; camera.scale=1; resetStats(); stateDirty=true; }
 if (resetBtn) resetBtn.addEventListener('click', resetBoard);
 
 // Export / Import / URL share
@@ -972,48 +1267,144 @@ loadGeoBtn.addEventListener('click', ()=>{
     const originLat = parseFloat(geoLat.value);
     const originLon = parseFloat(geoLon.value);
     const mpp = parseFloat(geoMPP.value);
-    metersPerPixel = mpp; mppInput.value = metersPerPixel;
+    const optimize = geoOptimize?.checked || false;
+    const tolerance = parseFloat(geoTolerance?.value || 1);
+    
+    metersPerPixel = mpp; 
+    mppInput.value = metersPerPixel;
 
-    const obj = JSON.parse(geoJsonArea.value);
-    if (!obj || obj.type!=='FeatureCollection') throw new Error('Must be a FeatureCollection');
+    const text = geoJsonArea.value;
+    const textSize = new Blob([text]).size;
+    
+    // Use Web Worker for large files or if optimization is enabled
+    if (optimize && textSize > 50000) { // > 50KB
+      importGeoJSONAsync(text, {
+        originLat,
+        originLon,
+        metersPerPixel: mpp,
+        simplifyTolerance: tolerance / 111000, // Convert meters to degrees (approx)
+        minAreaDeg2: 5e-8,
+        batchSize: 1000
+      });
+    } else {
+      // Fallback to synchronous import for small files
+      importGeoJSONSync(text, originLat, originLon, mpp);
+    }
+  }catch(e){ debug('Geo import error: '+e.message); }
+});
 
-    let bminX=Infinity,bminY=Infinity,bmaxX=-Infinity,bmaxY=-Infinity;
+function importGeoJSONAsync(text, options) {
+  // Initialize worker if needed
+  if (!geoWorker) {
+    try {
+      geoWorker = new Worker('geo-import-worker.js');
+      geoWorker.onmessage = handleWorkerMessage;
+      geoWorker.onerror = (error) => {
+        debug('Worker error: ' + error.message);
+        geoProgress.style.display = 'none';
+      };
+    } catch (e) {
+      debug('Worker creation failed, falling back to sync import: ' + e.message);
+      importGeoJSONSync(text, options.originLat, options.originLon, options.metersPerPixel);
+      return;
+    }
+  }
+  
+  // Show progress and start worker
+  geoProgress.style.display = 'block';
+  geoProgressText.textContent = 'Parsing GeoJSON...';
+  loadGeoBtn.disabled = true;
+  
+  // Clear existing data
+  obstacles = [];
+  spatialIndex.clear();
+  path2DCache.clear();
+  
+  geoWorker.postMessage({
+    type: 'parse',
+    payload: { text, options }
+  });
+}
 
-    for (const f of obj.features || []){
-      const g=f.geometry||{}, p=f.properties||{};
-      if (g.type==='Point'){
-        const [lon,lat]=g.coordinates;
-        const xy=llToXY(lat,lon,originLat,originLon,mpp);
-        bminX=Math.min(bminX,xy.x); bminY=Math.min(bminY,xy.y); bmaxX=Math.max(bmaxX,xy.x); bmaxY=Math.max(bmaxY,xy.y);
-        if ((p.name||'').toLowerCase()==='server'){ server.x=xy.x; server.y=xy.y; }
-        else { const nh={x:xy.x,y:xy.y,id:`Hive ${hives.length+1}`,txPower:1,seenData:new Set(),seenAck:new Set(),ackPulses:[], txPowerDbm: txDbmDefault}; hives.push(nh); }
-      } else if (g.type==='Polygon'){
-        // Convert GeoJSON polygon to canvas coordinates
+function handleWorkerMessage(e) {
+  const { type, payload } = e.data;
+  
+  if (type === 'batch') {
+    addObstaclesBatch(payload);
+  } else if (type === 'progress') {
+    geoProgressText.textContent = `${payload.processed} / ${payload.total} features processed`;
+  } else if (type === 'done') {
+    geoProgress.style.display = 'none';
+    loadGeoBtn.disabled = false;
+    log(`GeoJSON import complete: ${payload.count} features processed from ${payload.features} total`);
+    
+    // Fit view to imported data
+    try {
+      fitCameraToBounds(getWorldBounds());
+      focusServer('fit', 600);
+    } catch (e) {
+      debug('Auto-fit error: ' + e.message);
+    }
+  } else if (type === 'error') {
+    geoProgress.style.display = 'none';
+    loadGeoBtn.disabled = false;
+    debug('Worker import error: ' + payload);
+  }
+}
+
+function importGeoJSONSync(text, originLat, originLon, mpp) {
+  // Original synchronous implementation (simplified)
+  const obj = JSON.parse(text);
+  if (!obj || obj.type!=='FeatureCollection') throw new Error('Must be a FeatureCollection');
+
+  let bminX=Infinity,bminY=Infinity,bmaxX=-Infinity,bmaxY=-Infinity;
+
+  for (const f of obj.features || []){
+    const g=f.geometry||{}, p=f.properties||{};
+    if (g.type==='Point'){
+      const [lon,lat]=g.coordinates;
+      const xy=llToXY(lat,lon,originLat,originLon,mpp);
+      bminX=Math.min(bminX,xy.x); bminY=Math.min(bminY,xy.y); bmaxX=Math.max(bmaxX,xy.x); bmaxY=Math.max(bmaxY,xy.y);
+      if ((p.name||'').toLowerCase()==='server'){ server.x=xy.x; server.y=xy.y; }
+      else { const nh={x:xy.x,y:xy.y,id:`Hive ${hives.length+1}`,txPower:1,seenData:new Set(),seenAck:new Set(),ackPulses:[], txPowerDbm: txDbmDefault}; hives.push(nh); spatialIndex.add(nh); }
+    } else if (g.type==='Polygon' || g.type==='MultiPolygon'){
+      const polygons = g.type==='Polygon' ? [g.coordinates] : g.coordinates;
+      
+      for (const polygonCoords of polygons) {
         const points = [];
-        for (const [lon,lat] of g.coordinates[0]) { // First ring only (exterior)
+        for (const [lon,lat] of polygonCoords[0]) {
           const xy = llToXY(lat, lon, originLat, originLon, mpp);
           points.push({x: xy.x, y: xy.y});
         }
         
-        if (points.length >= 3) { // Valid polygon
+        if (points.length >= 3) {
           const bounds = getPolygonBounds(points);
           bminX=Math.min(bminX,bounds.minX); bminY=Math.min(bminY,bounds.minY); 
           bmaxX=Math.max(bmaxX,bounds.maxX); bmaxY=Math.max(bmaxY,bounds.maxY);
-          const loss=clamp(+p.loss||0.5,0,0.95);
-          const no={id:obsCounter++, type:'polygon', points, loss, bounds}; 
+          
+          const { material, k } = p.material ? 
+            { material: p.material, k: getMaterialAlpha(p.material) } : 
+            mapGeoFeatureToMaterial(p);
+          
+          const absorption = p.absorption ? clamp(+p.absorption, 0.00001, 5) : k;
+          const loss = p.loss ? clamp(+p.loss, 0, 0.95) : absorption * 0.1;
+          
+          const no={id:obsCounter++, type:'polygon', points, loss, absorption, bounds, material, k}; 
           obstacles.push(no);
+          spatialIndex.add(no);
         }
       }
     }
-    stateDirty=true;
-    if (Number.isFinite(bminX) && Number.isFinite(bminY) && Number.isFinite(bmaxX) && Number.isFinite(bmaxY)){
-      fitCameraToBounds({minX:bminX,minY:bminY,maxX:bmaxX,maxY:bmaxY});
-    } else {
-      fitCameraToBounds(getWorldBounds());
-    }
-    focusServer('fit', 600);
-  }catch(e){ debug('Geo import error: '+e.message); }
-});
+  }
+  
+  stateDirty=true;
+  if (Number.isFinite(bminX) && Number.isFinite(bminY) && Number.isFinite(bmaxX) && Number.isFinite(bmaxY)){
+    fitCameraToBounds({minX:bminX,minY:bminY,maxX:bmaxX,maxY:bmaxY});
+  } else {
+    fitCameraToBounds(getWorldBounds());
+  }
+  focusServer('fit', 600);
+}
 
 // Measure UI
 measureToggleBtn.addEventListener('click', ()=>{

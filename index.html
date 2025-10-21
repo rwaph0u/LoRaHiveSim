@@ -43,9 +43,26 @@
       <input id="obsRadiusNum" type="number" value="40" min="5" max="240" step="1">
     </div>
     <div class="row">
-      <label id="lblLoss" data-i18n="lossDefault">Loss (default)</label>
-      <input id="obsLoss" type="range" value="0.5" min="0" max="0.95" step="0.01">
-      <input id="obsLossNum" type="number" value="0.5" min="0" max="0.95" step="0.01">
+      <label id="lblMaterial" data-i18n="materialDefault">Material (default)</label>
+      <select id="obsMaterial">
+        <option value="brick" selected>🧱 Brick</option>
+        <option value="concrete">� Concrete</option>
+        <option value="forest">🌲 Forest</option>
+        <option value="field">🌾 Field</option>
+        <option value="water">💧 Water</option>
+        <option value="rock">🪨 Rock</option>
+        <option value="urban_mix">�️ Urban</option>
+        <option value="metal">🔩 Metal</option>
+        <option value="wood">🌳 Wood</option>
+        <option value="sand">🏖️ Sand</option>
+        <option value="default">❓ Default</option>
+      </select>
+    </div>
+    <div class="row">
+      <label id="lblAbsorption" data-i18n="absorptionCoeff">Absorption coeff. (α)</label>
+      <input id="obsAbsorption" type="range" value="0.35" min="0.00001" max="5" step="0.01">
+      <input id="obsAbsorptionNum" type="number" value="0.35" min="0.00001" max="5" step="0.01">
+      <span class="unit">Np/m</span>
     </div>
 
     <h4 class="section-title" data-i18n="loraParams">LoRa Parameters (global)</h4>
@@ -101,6 +118,39 @@
         <input id="txPowerNum" type="number" value="1" min="0.2" max="2" step="0.1">
       </div>
       <div class="hint" data-i18n="txHint">This visual TX scales wave alpha; dBm is used when Realistic mode is ON.</div>
+    </div>
+
+    <div id="selObstaclePanel" style="display:none;">
+      <div class="row"><label data-i18n="type">Type</label><div data-i18n="typeObstacle">Obstacle</div></div>
+      <div class="row"><label>ID</label><div id="selObstacleId">—</div></div>
+      <div class="row" id="selObstacleRadiusRow">
+        <label data-i18n="radius">Radius</label>
+        <input id="selObsRadius" type="range" value="40" min="5" max="240" step="1">
+        <input id="selObsRadiusNum" type="number" value="40" min="5" max="240" step="1">
+      </div>
+      <div class="row">
+        <label data-i18n="material">Material</label>
+        <select id="selObsMaterial">
+          <option value="brick">🧱 Brick</option>
+          <option value="concrete">� Concrete</option>
+          <option value="forest">🌲 Forest</option>
+          <option value="field">🌾 Field</option>
+          <option value="water">💧 Water</option>
+          <option value="rock">� Rock</option>
+          <option value="urban_mix">🏘️ Urban</option>
+          <option value="metal">🔩 Metal</option>
+          <option value="wood">🌳 Wood</option>
+          <option value="sand">🏖️ Sand</option>
+          <option value="default">❓ Default</option>
+        </select>
+      </div>
+      <div class="row">
+        <label data-i18n="absorptionCoeff">Absorption coeff. (α)</label>
+        <input id="selObsAbsorption" type="range" value="0.35" min="0.00001" max="5" step="0.01">
+        <input id="selObsAbsorptionNum" type="number" value="0.35" min="0.00001" max="5" step="0.01">
+        <span class="unit">Np/m</span>
+      </div>
+      <div class="hint" data-i18n="materialHint">Material affects signal attenuation through the obstacle thickness.</div>
     </div>
 
     <div class="btnbar">
@@ -172,10 +222,22 @@
         <div class="row">
           <label data-i18n="metersPerPx">Meters per pixel</label><input id="geoMPP" type="number" value="2" step="0.1">
         </div>
-        <div class="small hint" data-i18n="geoHint">Paste simple GeoJSON (Polygons/Points). Points become hives or server if name='server'. Polygons become obstacles with property 'loss' [0..0.95].</div>
+        <div class="row">
+          <label data-i18n="geoOptimize">Optimize large files</label>
+          <input id="geoOptimize" type="checkbox" checked>
+        </div>
+        <div class="row">
+          <label data-i18n="geoTolerance">Simplify tolerance (m)</label>
+          <input id="geoTolerance" type="number" value="1" min="0.1" max="10" step="0.1">
+        </div>
+        <div class="small hint" data-i18n="geoHint">Paste GeoJSON (Polygons/Points). Large files will be processed asynchronously with automatic simplification. Points become hives or server if name='server'. Polygons auto-detect materials from OSM tags.</div>
         <textarea id="geoJsonArea" placeholder='{"type":"FeatureCollection","features":[...]}'></textarea>
         <div class="btnbar">
           <button id="loadGeoBtn" class="accent" data-i18n="loadGeo">Load GeoJSON</button>
+        </div>
+        <div id="geoProgress" style="display:none;" class="small hint">
+          <div data-i18n="geoProcessing">Processing GeoJSON...</div>
+          <div id="geoProgressText">0 / 0 features</div>
         </div>
       </div>
     </div>
@@ -194,6 +256,7 @@
 
   <script>window.APP_VERSION = "0.3.0";</script>
   <script src="i18n.js"></script>
+  <script src="spatial-index.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

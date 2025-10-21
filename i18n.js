@@ -52,7 +52,10 @@ const STRINGS = {
     originLat: "Origin lat",
     originLon: "Origin lon",
     metersPerPx: "Meters per pixel",
-    geoHint: "Paste simple GeoJSON (Polygons/Points). Points become hives or server if name='server'. Polygons become obstacles with property 'loss' [0..0.95].",
+    geoOptimize: "Optimize large files",
+    geoTolerance: "Simplify tolerance (m)",
+    geoProcessing: "Processing GeoJSON...",
+    geoHint: "Paste GeoJSON (Polygons/Points). Large files will be processed asynchronously with automatic simplification. Points become hives or server if name='server'. Polygons auto-detect materials from OSM tags.",
     loadGeo: "Load GeoJSON",
   },
   fr: {
@@ -110,6 +113,9 @@ const STRINGS = {
     metersPerPx: "Mètres par pixel",
     geoHint: "Colle un GeoJSON simple (Polygones/Points). Les points deviennent ruchers (ou serveur si name='server'). Les polygones deviennent des obstacles avec 'loss' [0..0.95].",
     loadGeo: "Charger GeoJSON",
+    geoOptimize: "Optimiser géométries",
+    geoTolerance: "Tolérance simplification",
+    geoProcessing: "Traitement en cours...",
   }
 };
 function detectDefaultLang(){

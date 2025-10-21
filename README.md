@@ -1,6 +1,6 @@
-# LoRaHiveSim — v1.0.0
+# LoRaHiveSim — v1.2.0
 
-> **LoRa mesh playground** with a realistic radio model (FSPL + LoRa sensitivity), obstacles, minimap, import/export, distance measurement, sharable simulation state via URL, and full bilingual UI (EN/FR).  
+> **LoRa mesh playground** with a realistic radio model (FSPL + LoRa sensitivity), **realistic material-based obstacles**, minimap, import/export, distance measurement, sharable simulation state via URL, and full bilingual UI (EN/FR).  
 > License: **MIT**
 
 ---
@@ -11,7 +11,7 @@ LoRaHiveSim simulates **LoRa packet propagation** between **hives (nodes)** and 
 When **realistic mode** is enabled, range is computed from **path loss (FSPL)** and **receiver sensitivity**, then converted to pixels via _Meters per pixel_.  
 **Obstacles** locally attenuate the signal by sector, possibly blocking communication.
 
-- **Version**: 1.0.0 (SemVer)
+- **Version**: 1.2.0 (SemVer)
 - **Languages**: English / French (auto-detected, can be switched)
 - **License**: MIT
 
@@ -37,8 +37,9 @@ i18n.js
 - **Wave propagation** of DATA and ACK messages, with relay and TTL.
 - **Realistic mode** using FSPL + LoRa sensitivity (SF/BW) and TX power (default 10 dBm @ 868 MHz).
 - **Progressive acceleration** — waves start slowly and reach their full realistic range in exactly **10 seconds** with smooth acceleration curve.
-- **Obstacles** (circular and polygonal), draggable/resizable (mouse wheel), adjustable attenuation (Shift + wheel).  
-  Darker color = higher loss. Polygonal obstacles preserve their original shape from GeoJSON import.
+- **Realistic material-based obstacles** (concrete, brick, wood, glass, metal, vegetation, water, earth) with **exponential attenuation** model.  
+  Obstacles are colored according to their material type and apply physics-based signal attenuation.
+- **Polygonal obstacles** preserve their original shape from GeoJSON import, supporting complex building geometries.
 - **Infinite canvas** with smooth **pan/zoom**.
 - **Mini-map** for fast navigation.
 - **Distance measurement tool** (px ↔ m) and **“Focus server”** shortcut.
@@ -102,14 +103,38 @@ This ensures consistent timing regardless of range while providing natural visua
 
 ---
 
-## 🧱 Obstacles (Circular & Polygonal)
+## 🧱 Realistic Material-Based Obstacles
 
-- **Circular obstacles**: Create by dragging from palette, resize with mouse wheel, adjust loss with Shift+wheel.
-- **Polygonal obstacles**: Created from GeoJSON import, preserve original shape and can be dragged to move.
-- **No obstacle selected** → the panel defines **default values** for new circular obstacles.
-- **Obstacle selected** → the panel edits **that obstacle** (circular only for resize/loss controls).
-- **Color** → darker means stronger attenuation (loss 0..0.95).
-- **Propagation**: Polygonal obstacles apply uniform attenuation when waves intersect their shape.
+Obstacles now use **exponential attenuation** based on material properties instead of simple loss percentages:
+
+### Available Materials
+
+| Material   | Alpha (α) | Color      | Description                  |
+| ---------- | --------- | ---------- | ---------------------------- |
+| Concrete   | 0.8       | Gray       | Dense building material      |
+| Brick      | 0.6       | Red-brown  | Traditional building walls   |
+| Wood       | 0.3       | Brown      | Timber construction          |
+| Glass      | 0.1       | Light blue | Windows, minimal attenuation |
+| Metal      | 1.2       | Steel gray | High RF blocking (Faraday)   |
+| Vegetation | 0.4       | Green      | Trees, foliage               |
+| Water      | 0.2       | Blue       | Ponds, rivers                |
+| Earth/Rock | 0.5       | Tan        | Natural terrain, hills       |
+
+### Physics Model
+
+**Attenuation formula**: `signal_strength *= exp(-α × distance_inside_obstacle)`
+
+- **α (Alpha coefficient)**: Material-specific attenuation constant
+- **Distance inside**: Approximate thickness the signal travels through the obstacle
+- **Exponential decay**: Realistic RF propagation physics (Beer-Lambert law)
+- Higher α values = stronger attenuation (metal blocks signals most)
+
+### Usage
+
+- **Circular obstacles**: Create by dragging from palette, select material from dropdown
+- **Polygonal obstacles**: Import from GeoJSON with `material` property, or edit after creation
+- **Visual feedback**: Obstacles are colored according to their material type
+- **Legacy support**: Existing obstacles default to "concrete" material
 
 ---
 
@@ -159,12 +184,17 @@ This ensures consistent timing regardless of range while providing natural visua
           ]
         ]
       },
-      "properties": { "loss": 0.6 }
+      "properties": {
+        "loss": 0.6,
+        "material": "brick"
+      }
     }
   ]
 }
 ```
 
+> **Material support**: Add `"material": "concrete"` (or brick, wood, glass, metal, vegetation, water, earth) to polygon properties.  
+> **Legacy support**: If no material is specified, obstacles default to "concrete".  
 > Upon import, the view automatically **fits** and **focuses on the server**.
 
 ---
@@ -206,6 +236,8 @@ Nodes snap automatically if near cursor.
 
 ## 📝 Changelog
 
+- **1.2.0** — **Realistic material-based obstacles**: Exponential attenuation model with 8 material types (concrete, brick, wood, glass, metal, vegetation, water, earth). Physics-based RF propagation with material-specific alpha coefficients and color-coded visualization.
+- **1.1.0** — **Time-on-Air (ToA) calculation, EU868 duty-cycle enforcement, and Adaptive Data Rate (ADR)**: Realistic LoRaWAN protocol compliance with packet duration calculation, regulatory duty-cycle restrictions, and automatic SF/power adaptation.
 - **1.0.0** — **First stable release**: Complete LoRa mesh simulation with realistic radio model, polygonal obstacles, progressive wave acceleration, smart ACK handling, and comprehensive GeoJSON support.
 - **0.3.0** — Progressive wave acceleration (exactly 10s), realistic LoRa parameters, improved obstacle blocking, fixed ACK relay logic, **polygonal obstacles** from GeoJSON with realistic shape preservation.
 - **0.2.x** — Realistic mode, obstacle sectors, import/export, GeoJSON, minimap, distance tool, i18n.
