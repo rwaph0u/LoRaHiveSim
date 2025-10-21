@@ -1,4 +1,4 @@
-const APP_VERSION = window.APP_VERSION || "1.3.0";
+const APP_VERSION = window.APP_VERSION || "1.3.1";
 
 // --- DOM ---
 const canvas = document.getElementById("simCanvas");
@@ -86,6 +86,9 @@ const loadGeoBtn = document.getElementById("loadGeoBtn");
 const cumulativeChk = document.getElementById("cumulativeChk");
 const maxAttenuationInput = document.getElementById("maxAttenuationInput");
 
+// v1.3.1 Controls  
+const debugAngleChk = document.getElementById("debugAngleChk");
+
 // Palette drag
 document.querySelector('.rucherItem').addEventListener('dragstart', startDrag);
 document.querySelector('.obstacleItem').addEventListener('dragstart', startDrag);
@@ -119,7 +122,20 @@ let txDbmDefault = 10;  // More realistic power for battery devices
 let realistic = true;   // enabled by default
 
 const SECTORS = 72;
-const SECTOR_RAD = (2*Math.PI)/SECTORS;
+const TWO_PI = Math.PI * 2;
+const SECTOR_RAD = TWO_PI/SECTORS;
+
+// --- v1.3.1 Standardized angle helpers ---
+/** Return angle in [0, 2π) from the wave center toward (x,y). */
+function angleFromWaveTo(x, y, wave) {
+  const theta = Math.atan2(y - wave.y, x - wave.x);  // vector: wave → (x,y)
+  return (theta + TWO_PI) % TWO_PI;                  // normalize
+}
+
+/** Bucket a normalized angle to a sector index using floor (not round). */
+function sectorIndexFromAngle(theta, SECTORS) {
+  return Math.floor(theta * SECTORS / TWO_PI) % SECTORS;
+}
 
 // --- Material system for realistic obstacle attenuation (v1.3.0) ---
 const MATERIALS = {
@@ -165,13 +181,23 @@ function estimateDeltaChordLengthPx(obs, cx, cy, r0, r1) {
   return Math.max(0, c1 - c0);
 }
 
-function sectorsHitByObstacle(obs, wave) {
-  const ang = Math.atan2(obs.y - wave.y, obs.x - wave.x);
-  const s = Math.round(((ang + Math.PI) / (2*Math.PI)) * SECTORS) % SECTORS;
-  const span = 2; // Affect nearby sectors for smoother attenuation
+/**
+ * Returns a small neighborhood of sector indices affected by an obstacle.
+ * span=2 touches s0-2..s0+2. Increase if obstacles are large or to smooth edges.
+ * v1.3.1: Fixed 180° rotation bug by removing +Math.PI and using standardized helpers.
+ */
+function sectorsHitByObstacle(obs, wave, span = 2) {
+  const theta = angleFromWaveTo(obs.x, obs.y, wave);        // ✅ wave → obstacle
+  const s0 = sectorIndexFromAngle(theta, SECTORS);          // ✅ floor-based bucketing
+  
+  // v1.3.1 Debug logging for angle validation
+  if (DEBUG_ANGLE) {
+    debug(`obs@(${obs.x.toFixed(1)},${obs.y.toFixed(1)}) θ=${(theta*180/Math.PI).toFixed(1)}° → s=${s0}`);
+  }
+  
   const arr = [];
   for (let i = -span; i <= span; i++) {
-    arr.push((s + i + SECTORS) % SECTORS);
+    arr.push((s0 + i + SECTORS) % SECTORS);
   }
   return arr;
 }
@@ -233,6 +259,9 @@ let measurePts = []; // [{x,y,label}], world coords
 // --- Utils ---
 function log(msg){ logs.textContent += msg + "\n"; logs.scrollTop = logs.scrollHeight; }
 function debug(msg){ debugLogs.textContent += msg + "\n"; debugLogs.scrollTop = debugLogs.scrollHeight; }
+
+// v1.3.1 Debug flag for angle diagnostics
+let DEBUG_ANGLE = false;
 function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
 const keyOS = (o,s) => `${o}#${s}`;
 function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
@@ -837,12 +866,20 @@ function drawWaves(){
   for (const o of waves){
     const cap = o.maxRadius ?? getRange();
     for (let i=0;i<SECTORS;i++){
-      const a0=i*(2*Math.PI/SECTORS), a1=a0+(2*Math.PI/SECTORS);
-      const eff=o.alpha*o.alphaSectors[i]; if (eff<=0) continue;
-      const s=w2s(o.x,o.y);
-      ctx.beginPath(); ctx.arc(s.x,s.y,Math.min(o.r,cap)*camera.scale,a0,a1);
-      ctx.strokeStyle=(o.type==='DATA'?`rgba(0,150,255,${eff})`:`rgba(255,165,0,${eff})`);
-      ctx.lineWidth=2*camera.scale; ctx.stroke();
+      // v1.3.1: Use standardized angle convention with TWO_PI
+      const a0 = i * TWO_PI / SECTORS;
+      const a1 = (i + 1) * TWO_PI / SECTORS;
+      
+      const eff = o.alpha * o.alphaSectors[i]; 
+      if (eff <= 0.02) continue; // Skip extremely weak sectors
+      
+      const s = w2s(o.x, o.y);
+      ctx.beginPath(); 
+      // IMPORTANT: anticlockwise=false to keep standard CCW orientation
+      ctx.arc(s.x, s.y, Math.min(o.r, cap) * camera.scale, a0, a1, false);
+      ctx.strokeStyle = (o.type === 'DATA' ? `rgba(0,150,255,${eff})` : `rgba(255,165,0,${eff})`);
+      ctx.lineWidth = 2 * camera.scale; 
+      ctx.stroke();
     }
   }
 }
@@ -1446,5 +1483,13 @@ if (maxAttenuationInput) {
   maxAttenuationInput.addEventListener('input', () => {
     MAX_OBSTACLE_DB = clamp(+maxAttenuationInput.value, 20, 80);
     debug(`Max attenuation cap set to ${MAX_OBSTACLE_DB} dB`);
+  });
+}
+
+// v1.3.1 Debug angle control
+if (debugAngleChk) {
+  debugAngleChk.addEventListener('change', () => {
+    DEBUG_ANGLE = debugAngleChk.checked;
+    debug(`Debug angle calculations: ${DEBUG_ANGLE ? 'ON' : 'OFF'}`);
   });
 }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>LoRaHiveSim v1.3.0 — LoRa Mesh Playground</title>
+  <title>LoRaHiveSim v1.3.1 — LoRa Mesh Playground</title>
   <link rel="stylesheet" href="styles.css"/>
   <meta name="description" content="LoRaHiveSim — interactive LoRa mesh playground with realistic path-loss, obstacles, import/export, minimap, and measurement tools.">
 </head>
@@ -111,6 +111,10 @@
     <div class="row">
       <label data-i18n="maxAttenuationDb">Max attenuation (dB)</label>
       <input id="maxAttenuationInput" type="number" value="40" min="20" max="80" step="5">
+    </div>
+    <div class="row">
+      <label data-i18n="debugAngle">Debug angle calculations (v1.3.1)</label>
+      <input id="debugAngleChk" type="checkbox">
     </div>
     <div class="small hint" data-i18n="loraHint">These parameters adjust range and sensitivity. Visual wave radius follows realistic range when enabled.</div>
 
@@ -262,7 +266,7 @@
     <div id="hintOverlay" data-i18n="hintOverlay">Space / right / middle click: pan — Wheel: zoom</div>
   </div>
 
-  <script>window.APP_VERSION = "1.3.0";</script>
+  <script>window.APP_VERSION = "1.3.1";</script>
   <script src="i18n.js"></script>
   <script src="spatial-index.js"></script>
   <script src="app.js"></script>

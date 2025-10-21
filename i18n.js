@@ -57,6 +57,7 @@ const STRINGS = {
     geoProcessing: "Processing GeoJSON...",
     cumulativeAttenuation: "Cumulative attenuation (v1.3.0)",
     maxAttenuationDb: "Max attenuation (dB)",
+    debugAngle: "Debug angle calculations (v1.3.1)",
     geoHint: "Paste GeoJSON (Polygons/Points). Large files will be processed asynchronously with automatic simplification. Points become hives or server if name='server'. Polygons auto-detect materials from OSM tags.",
     loadGeo: "Load GeoJSON",
   },
@@ -120,6 +121,7 @@ const STRINGS = {
     geoProcessing: "Traitement en cours...",
     cumulativeAttenuation: "Atténuation cumulative (v1.3.0)",
     maxAttenuationDb: "Atténuation max (dB)",
+    debugAngle: "Debug calculs d'angles (v1.3.1)",
   }
 };
 function detectDefaultLang(){
