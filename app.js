@@ -137,6 +137,15 @@ function sectorIndexFromAngle(theta, SECTORS) {
   return Math.floor(theta * SECTORS / TWO_PI) % SECTORS;
 }
 
+/** v1.3.3: Interpolate alpha between adjacent sectors for smoother RX at boundaries */
+function interpolateSectorAlpha(theta, alphaArray, SECTORS) {
+  const sFloat = theta * SECTORS / TWO_PI;
+  const s0 = Math.floor(sFloat) % SECTORS;
+  const s1 = (s0 + 1) % SECTORS;
+  const t = sFloat - Math.floor(sFloat); // fractional part [0,1)
+  return (1 - t) * alphaArray[s0] + t * alphaArray[s1];
+}
+
 // --- Material system for realistic obstacle attenuation (v1.3.2 Calibrated EU868) ---
 const MATERIALS = {
   'brick': { alpha: 0.35, color: '#964B00', name: '🧱 Brick', loss_db: 3.0 },
@@ -405,6 +414,15 @@ function getViewport() {
   };
 }
 
+// --- v1.3.3 Debug and RX helpers ---
+function debugRxDecision(tag, src, dst, theta, aPhys, d_m, fspl_dB, lossObs_dB, Ptx_dBm, sens_dBm, ok) {
+  console.debug(`[${tag}] θ=${(theta*180/Math.PI).toFixed(1)}°  ` +
+    `alphaPhys=${aPhys.toFixed(3)}  lossObs=${lossObs_dB.toFixed(1)}dB  ` +
+    `d=${d_m.toFixed(1)}m  FSPL=${fspl_dB.toFixed(1)}dB  ` +
+    `Ptx=${Ptx_dBm}dBm  Prx=${(Ptx_dBm - fspl_dB - lossObs_dB).toFixed(1)}dBm  ` +
+    `sens=${sens_dBm}dBm  RX=${ok ? '✔' : '✖'}`);
+}
+
 // --- Realistic radio helpers ---
 function loraSensitivityDbm(sf, bw){
   // More realistic LoRa sensitivity values (worse than theoretical)
@@ -491,12 +509,40 @@ function emitWave(source, type="DATA", data=null, origin=null, ttl=maxRetrans){
   const w = { 
     x:source.x, y:source.y, r:0, alpha:startAlpha, type, 
     data:data||createData(source), origin:origin||source.id, emitterId:source.id, 
-    hit:{}, ttl, alphaSectors:new Array(SECTORS).fill(1), obstacleApplied:new Set(), 
+    hit:{}, ttl, 
+    alphaSectors:new Array(SECTORS).fill(1),      // Visual (clamped) for rendering
+    alphaPhysical:new Array(SECTORS).fill(1),     // Physical (unclamped) for RX - v1.3.3
+    obstacleApplied:new Set(), 
     maxRadius:maxR, startTime, lastUpdateTime:startTime,
     // v1.3.0: Cumulative path tracking
     pathMeters: new Float32Array(SECTORS).fill(0),
-    rPrev: 0
+    rPrev: 0,
+    // v1.3.3: Origin-inside obstacle handling
+    originInsideProcessed: new Set()
   };
+  
+  // v1.3.3: Handle wave origin inside/tangent obstacles with one-shot thickness
+  for (const ob of obstacles) {
+    if (obstacleContainsPoint(ob, w.x, w.y) || 
+        (ob.type !== 'polygon' && Math.hypot(ob.x - w.x, ob.y - w.y) <= ob.radius + 2)) {
+      
+      const thickness = ob.type === 'polygon' 
+        ? Math.sqrt((ob.bounds.maxX - ob.bounds.minX) * (ob.bounds.maxY - ob.bounds.minY)) * 0.5
+        : ob.radius * 2;
+      
+      const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'default');
+      const thicknessM = thickness * metersPerPixel;
+      const sectors = sectorsHitByObstacle(ob, w);
+      const sharePerSector = thicknessM / sectors.length;
+      
+      for (const s of sectors) {
+        w.pathMeters[s] += sharePerSector;
+      }
+      
+      w.originInsideProcessed.add(ob.id);
+      debug(`Origin inside obstacle ${ob.id}: applied one-shot thickness ${thickness.toFixed(1)}px`);
+    }
+  }
   waves.push(w);
   log(`${source.id} emits ${type} seq:${data?data.seq:''} TTL=${ttl} visualRange≈${(w.maxRadius*metersPerPixel)|0} m`);
 }
@@ -597,13 +643,14 @@ function updateWaves(){
         }
       }
       
-      // Recompute attenuation from cumulative path lengths
+      // Recompute attenuation from cumulative path lengths - v1.3.3 dual alpha
       for (let s = 0; s < SECTORS; s++) {
         const L = o.pathMeters[s];
         const k = 0.25; // Average attenuation coefficient
         const dB = Math.min(MAX_OBSTACLE_DB, 8.686 * k * L);
         const linearFactor = Math.pow(10, -dB / 10);
-        o.alphaSectors[s] = Math.max(ALPHA_MIN, linearFactor); // v1.3.2 visibility clamp
+        o.alphaPhysical[s] = linearFactor;                    // Physical (unclamped) for RX
+        o.alphaSectors[s] = Math.max(ALPHA_MIN, linearFactor); // Visual (clamped) for rendering
       }
       } // Close r1 > r0 condition
     } else {
@@ -646,40 +693,58 @@ function updateWaves(){
         o.obstacleApplied.add(ob.id);
       }
       
-      // Recompute alphas from total path lengths (fixes v1.3.2 *= bug)
+      // Recompute alphas from total path lengths (fixes v1.3.2 *= bug) - v1.3.3 dual alpha
       for (let s = 0; s < SECTORS; s++) {
         const L = o.pathMeters[s];
         const k = 0.25; // Default coefficient for legacy mode
         const dB = Math.min(MAX_OBSTACLE_DB, 8.686 * k * L);
         const linearFactor = Math.pow(10, -dB / 10);
-        o.alphaSectors[s] = Math.max(ALPHA_MIN, linearFactor); // v1.3.2 visibility clamp
+        o.alphaPhysical[s] = linearFactor;                    // Physical (unclamped) for RX
+        o.alphaSectors[s] = Math.max(ALPHA_MIN, linearFactor); // Visual (clamped) for rendering
       }
     }
 
-    const rxT = getRxThresh();
-    function canRxVisual(target){
-      const th=angle(o.x,o.y,target.x,target.y); const s=angleToSector(th); const eff=o.alpha*o.alphaSectors[s];
-      return eff>=rxT;
+    // v1.3.3: Unified RX function with physical alpha and sector interpolation
+    function canReceive(target, waveType = o.type) {
+      const source = resolveNode(o.emitterId) || {txPowerDbm: txDbmDefault, x: o.x, y: o.y};
+      
+      // v1.3.3: Use standardized angle helper (wave center -> target)
+      const th = angleFromWaveTo(target.x, target.y, o);
+      
+      // v1.3.3: Interpolate physical alpha between sectors for smooth boundaries
+      const alphaPhys = interpolateSectorAlpha(th, o.alphaPhysical, SECTORS);
+      
+      if (realistic) {
+        // Realistic mode: full RF calculation with physical alpha
+        const d_px = Math.hypot(target.x - o.x, target.y - o.y);
+        const d_m = Math.max(1e-3, d_px * metersPerPixel);
+        const fspl_dB = fsplDb(d_m, fMHz);
+        const lossObs_dB = alphaPhys < 1e-6 ? 60 : -10 * Math.log10(Math.max(1e-6, alphaPhys));
+        const txDbm = isNum(source.txPowerDbm) ? source.txPowerDbm : txDbmDefault;
+        const rx_dBm = txDbm - fspl_dB - lossObs_dB;
+        const sens_dBm = loraSensitivityDbm(lora.sf, lora.bw);
+        const canRx = rx_dBm >= sens_dBm;
+        
+        // Debug logging when enabled
+        if (DEBUG_ANGLE) {
+          debugRxDecision(waveType, source, target, th, alphaPhys, d_m, fspl_dB, lossObs_dB, txDbm, sens_dBm, canRx);
+        }
+        
+        return canRx;
+      } else {
+        // Visual mode: threshold-based with physical alpha
+        const rxT = getRxThresh();
+        const eff = o.alpha * alphaPhys; // Use physical alpha, not visual!
+        return eff >= rxT;
+      }
     }
-    function canRxRealistic(target){
-      const source = resolveNode(o.emitterId) || {txPowerDbm: txDbmDefault, x:o.x, y:o.y};
-      const th=angle(o.x,o.y,target.x,target.y); const s=angleToSector(th);
-      const sectorEff = o.alphaSectors[s]; // 0..1
-      const d_px = Math.hypot(target.x - o.x, target.y - o.y);
-      const d_m = Math.max(1e-3, d_px * metersPerPixel);
-      const pl = fsplDb(d_m, fMHz);
-      // Obstacle attenuation: if sectorEff is very low (high loss), add significant penalty
-      const obstDb = sectorEff < 0.1 ? 60 : -10 * Math.log10(Math.max(1e-6, sectorEff));
-      const txDbm = isNum(source.txPowerDbm)? source.txPowerDbm : txDbmDefault;
-      const rx = txDbm - pl - obstDb;
-      const sens = loraSensitivityDbm(lora.sf, lora.bw);
-      return rx >= sens;
-    }
-    const canRx = realistic ? canRxRealistic : canRxVisual;
 
-    // server receive
-    if (o.type==='DATA' && dist(o,server)<o.r && !o.hit[server.id]){
-      if (canRx(server)){
+    // v1.3.3: Epsilon tolerance for robust hit-testing
+    const HIT_TOLERANCE_PX = 1.5; // Prevent floating-point precision issues
+
+    // server receive - v1.3.3: with epsilon tolerance
+    if (o.type==='DATA' && dist(o,server) <= o.r + HIT_TOLERANCE_PX && !o.hit[server.id]){
+      if (canReceive(server, 'DATA')){
         o.hit[server.id]=true;
         const k=keyOS(o.origin,o.data.seq);
         if (!serverSeen.has(k)){
@@ -693,9 +758,9 @@ function updateWaves(){
 
     // hives
     for (const h of hives){
-      if (dist(o,h)<o.r && !o.hit[h.id]){
+      if (dist(o,h) <= o.r + HIT_TOLERANCE_PX && !o.hit[h.id]){
         if (o.emitterId && h.id===o.emitterId){ o.hit[h.id]=true; continue; }
-        if (!canRx(h)){ o.hit[h.id]=true; stats.shadowDrops++; statsDirty=true; continue; }
+        if (!canReceive(h, o.type)){ o.hit[h.id]=true; stats.shadowDrops++; statsDirty=true; continue; }
 
         o.hit[h.id]=true;
         h.seenData ||= new Set(); h.seenAck ||= new Set(); h.ackPulses ||= [];
