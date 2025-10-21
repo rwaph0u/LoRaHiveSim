@@ -55,6 +55,8 @@ const STRINGS = {
     geoOptimize: "Optimize large files",
     geoTolerance: "Simplify tolerance (m)",
     geoProcessing: "Processing GeoJSON...",
+    cumulativeAttenuation: "Cumulative attenuation (v1.3.0)",
+    maxAttenuationDb: "Max attenuation (dB)",
     geoHint: "Paste GeoJSON (Polygons/Points). Large files will be processed asynchronously with automatic simplification. Points become hives or server if name='server'. Polygons auto-detect materials from OSM tags.",
     loadGeo: "Load GeoJSON",
   },
@@ -116,6 +118,8 @@ const STRINGS = {
     geoOptimize: "Optimiser géométries",
     geoTolerance: "Tolérance simplification",
     geoProcessing: "Traitement en cours...",
+    cumulativeAttenuation: "Atténuation cumulative (v1.3.0)",
+    maxAttenuationDb: "Atténuation max (dB)",
   }
 };
 function detectDefaultLang(){

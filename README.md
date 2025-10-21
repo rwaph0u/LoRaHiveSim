@@ -1,4 +1,4 @@
-# LoRaHiveSim — v1.2.0
+# LoRaHiveSim — v1.3.0
 
 > **LoRa mesh playground** with a realistic radio model (FSPL + LoRa sensitivity), **realistic material-based obstacles**, minimap, import/export, distance measurement, sharable simulation state via URL, and full bilingual UI (EN/FR).  
 > License: **MIT**
@@ -11,7 +11,7 @@ LoRaHiveSim simulates **LoRa packet propagation** between **hives (nodes)** and 
 When **realistic mode** is enabled, range is computed from **path loss (FSPL)** and **receiver sensitivity**, then converted to pixels via _Meters per pixel_.  
 **Obstacles** locally attenuate the signal by sector, possibly blocking communication.
 
-- **Version**: 1.2.0 (SemVer)
+- **Version**: 1.3.0 (SemVer)
 - **Languages**: English / French (auto-detected, can be switched)
 - **License**: MIT
 
@@ -107,27 +107,31 @@ This ensures consistent timing regardless of range while providing natural visua
 
 Obstacles now use **exponential attenuation** based on material properties instead of simple loss percentages:
 
-### Available Materials
+### Available Materials (v1.3.0 Calibrated for 868 MHz)
 
-| Material   | Alpha (α) | Color      | Description                  |
-| ---------- | --------- | ---------- | ---------------------------- |
-| Concrete   | 0.8       | Gray       | Dense building material      |
-| Brick      | 0.6       | Red-brown  | Traditional building walls   |
-| Wood       | 0.3       | Brown      | Timber construction          |
-| Glass      | 0.1       | Light blue | Windows, minimal attenuation |
-| Metal      | 1.2       | Steel gray | High RF blocking (Faraday)   |
-| Vegetation | 0.4       | Green      | Trees, foliage               |
-| Water      | 0.2       | Blue       | Ponds, rivers                |
-| Earth/Rock | 0.5       | Tan        | Natural terrain, hills       |
+| Material  | Alpha (α) | Color       | Description                | Loss (dB/m) |
+| --------- | --------- | ----------- | -------------------------- | ----------- |
+| Concrete  | 0.8       | Gray        | Dense building material    | 6.9         |
+| Brick     | 0.5       | Red-brown   | Traditional building walls | 4.3         |
+| Wood      | 0.35      | Brown       | Light forest, timber       | 3.0         |
+| Forest    | 0.2       | Dark green  | Dense vegetation           | 1.7         |
+| Field     | 0.05      | Light green | Open grassland             | 0.4         |
+| Water     | 2.0       | Blue        | High absorption            | 17.4        |
+| Rock      | 1.2       | Gray        | Rocky terrain, mountains   | 10.4        |
+| Urban Mix | 0.6       | Light gray  | Mixed residential area     | 5.2         |
+| Metal     | 1.5       | Steel       | High RF blocking (Faraday) | 13.0        |
+| Sand      | 0.1       | Tan         | Low-loss dry terrain       | 0.9         |
 
-### Physics Model
+### Physics Model (v1.3.0 Cumulative Attenuation)
 
-**Attenuation formula**: `signal_strength *= exp(-α × distance_inside_obstacle)`
+**Cumulative attenuation formula**: `α_sector = exp(-∑(k_i × L_i))`
 
-- **α (Alpha coefficient)**: Material-specific attenuation constant
-- **Distance inside**: Approximate thickness the signal travels through the obstacle
-- **Exponential decay**: Realistic RF propagation physics (Beer-Lambert law)
-- Higher α values = stronger attenuation (metal blocks signals most)
+- **k_i**: Material-specific absorption coefficient (Np/m) for obstacle i
+- **L_i**: Cumulative path length (meters) through obstacle i
+- **Sector-based calculation**: Each wave divided into angular sectors (72 sectors = 5° resolution)
+- **Metric consistency**: Proper pixel→meter conversion for realistic distances
+- **Attenuation cap**: Maximum 40 dB loss per sector to preserve visual clarity
+- **Exponential decay**: Follows Beer-Lambert law for RF propagation physics
 
 ### Usage
 
@@ -236,6 +240,7 @@ Nodes snap automatically if near cursor.
 
 ## 📝 Changelog
 
+- **1.3.0** — **Realistic Cumulative Attenuation Model**: Complete rewrite of signal attenuation using cumulative path lengths through obstacles. Fixes excessive signal extinction and improves physical accuracy with metric-consistent calculations. Enhanced material coefficients calibrated for 868 MHz, proper wood/forest distinction, and sector-based debugging tools.
 - **1.2.0** — **Realistic material-based obstacles**: Exponential attenuation model with 8 material types (concrete, brick, wood, glass, metal, vegetation, water, earth). Physics-based RF propagation with material-specific alpha coefficients and color-coded visualization.
 - **1.1.0** — **Time-on-Air (ToA) calculation, EU868 duty-cycle enforcement, and Adaptive Data Rate (ADR)**: Realistic LoRaWAN protocol compliance with packet duration calculation, regulatory duty-cycle restrictions, and automatic SF/power adaptation.
 - **1.0.0** — **First stable release**: Complete LoRa mesh simulation with realistic radio model, polygonal obstacles, progressive wave acceleration, smart ACK handling, and comprehensive GeoJSON support.

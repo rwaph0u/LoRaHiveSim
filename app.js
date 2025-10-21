@@ -1,4 +1,4 @@
-const APP_VERSION = window.APP_VERSION || "1.2.0";
+const APP_VERSION = window.APP_VERSION || "1.3.0";
 
 // --- DOM ---
 const canvas = document.getElementById("simCanvas");
@@ -82,6 +82,10 @@ const geoProgressText = document.getElementById("geoProgressText");
 const geoJsonArea = document.getElementById("geoJsonArea");
 const loadGeoBtn = document.getElementById("loadGeoBtn");
 
+// v1.3.0 Controls
+const cumulativeChk = document.getElementById("cumulativeChk");
+const maxAttenuationInput = document.getElementById("maxAttenuationInput");
+
 // Palette drag
 document.querySelector('.rucherItem').addEventListener('dragstart', startDrag);
 document.querySelector('.obstacleItem').addEventListener('dragstart', startDrag);
@@ -117,20 +121,24 @@ let realistic = true;   // enabled by default
 const SECTORS = 72;
 const SECTOR_RAD = (2*Math.PI)/SECTORS;
 
-// --- Material system for realistic obstacle attenuation ---
+// --- Material system for realistic obstacle attenuation (v1.3.0) ---
 const MATERIALS = {
-  'brick': { alpha: 0.35, color: '#964B00', name: '🧱 Brick', loss_db: 1.5 },
-  'concrete': { alpha: 1.15, color: '#505050', name: '� Concrete', loss_db: 5.0 },
-  'forest': { alpha: 0.15, color: '#007800', name: '🌲 Forest', loss_db: 0.65 },
-  'field': { alpha: 0.03, color: '#B4FF78', name: '🌾 Field', loss_db: 0.13 },
-  'water': { alpha: 3.0, color: '#0064FF', name: '💧 Water', loss_db: 13.0 },
-  'rock': { alpha: 1.8, color: '#787878', name: '🪨 Rock', loss_db: 7.8 },
-  'urban_mix': { alpha: 0.25, color: '#C8C8C8', name: '🏘️ Urban', loss_db: 1.1 },
-  'metal': { alpha: 2.5, color: '#9696B4', name: '� Metal', loss_db: 10.8 },
-  'wood': { alpha: 0.05, color: '#8B4513', name: '🌳 Wood', loss_db: 0.2 },
-  'sand': { alpha: 0.08, color: '#F4A460', name: '🏖️ Sand', loss_db: 0.35 },
-  'default': { alpha: 0.1, color: '#C8C8C8', name: '❓ Default', loss_db: 0.43 }
+  'brick': { alpha: 0.5, color: '#964B00', name: '🧱 Brick', loss_db: 4.3 },
+  'concrete': { alpha: 0.8, color: '#505050', name: '� Concrete', loss_db: 6.9 },
+  'forest': { alpha: 0.2, color: '#007800', name: '🌲 Forest', loss_db: 1.7 },
+  'field': { alpha: 0.05, color: '#B4FF78', name: '🌾 Field', loss_db: 0.4 },
+  'water': { alpha: 2.0, color: '#0064FF', name: '💧 Water', loss_db: 17.4 },
+  'rock': { alpha: 1.2, color: '#787878', name: '🪨 Rock', loss_db: 10.4 },
+  'urban_mix': { alpha: 0.6, color: '#C8C8C8', name: '🏘️ Urban', loss_db: 5.2 },
+  'metal': { alpha: 1.5, color: '#9696B4', name: '� Metal', loss_db: 13.0 },
+  'wood': { alpha: 0.35, color: '#8B4513', name: '🌳 Wood', loss_db: 3.0 },
+  'sand': { alpha: 0.1, color: '#F4A460', name: '🏖️ Sand', loss_db: 0.9 },
+  'default': { alpha: 0.25, color: '#C8C8C8', name: '❓ Default', loss_db: 2.2 }
 };
+
+// Constants for realistic attenuation model (v1.3.0)
+let MAX_OBSTACLE_DB = 40;   // cap per sector for visibility (adjustable)
+let useCumulativeAttenuation = true;  // Toggle for v1.3.0 model
 
 function getMaterialAlpha(material) {
   return MATERIALS[material]?.alpha || 0.6; // Default alpha if material not found (brick)
@@ -140,19 +148,48 @@ function getMaterialColor(material) {
   return MATERIALS[material]?.color || '#C8C8C8'; // Default color if material not found
 }
 
+// --- Realistic attenuation calculation functions (v1.3.0) ---
+function chordLengthCirclePx(obs, cx, cy, r) {
+  const dx = obs.x - cx, dy = obs.y - cy;
+  const d = Math.hypot(dx, dy);
+  const R = obs.radius;
+  if (d >= r + R || d <= Math.abs(r - R)) return 0;
+  const x = (d*d + R*R - r*r) / (2*d);
+  const h = Math.sqrt(Math.max(0, R*R - x*x));
+  return 2*h;
+}
+
+function estimateDeltaChordLengthPx(obs, cx, cy, r0, r1) {
+  const c1 = chordLengthCirclePx(obs, cx, cy, r1);
+  const c0 = chordLengthCirclePx(obs, cx, cy, r0);
+  return Math.max(0, c1 - c0);
+}
+
+function sectorsHitByObstacle(obs, wave) {
+  const ang = Math.atan2(obs.y - wave.y, obs.x - wave.x);
+  const s = Math.round(((ang + Math.PI) / (2*Math.PI)) * SECTORS) % SECTORS;
+  const span = 2; // Affect nearby sectors for smoother attenuation
+  const arr = [];
+  for (let i = -span; i <= span; i++) {
+    arr.push((s + i + SECTORS) % SECTORS);
+  }
+  return arr;
+}
+
 // --- GeoJSON to Material Mapping ---
 function mapGeoFeatureToMaterial(props) {
   const materialMap = [
-    { key: "building", match: /industrial|warehouse|bunker/, material: "concrete", k: 1.15 },
-    { key: "building", match: /yes|house|residential|commercial/, material: "brick", k: 0.35 },
-    { key: "landuse", match: /forest|wood|scrub/, material: "forest", k: 0.15 },
-    { key: "landuse", match: /grass|meadow|pasture|farmland/, material: "field", k: 0.03 },
-    { key: "natural", match: /water|wetland|river|lake/, material: "water", k: 3.0 },
-    { key: "natural", match: /rock|mountain/, material: "rock", k: 1.8 },
-    { key: "landuse", match: /urban|residential/, material: "urban_mix", k: 0.25 },
-    { key: "landuse", match: /military/, material: "metal", k: 2.5 },
-    { key: "landuse", match: /cemetery|park/, material: "wood", k: 0.05 },
-    { key: "natural", match: /sand|beach/, material: "sand", k: 0.08 },
+    { key: "building", match: /industrial|warehouse|bunker/, material: "concrete", k: 0.8 },
+    { key: "building", match: /yes|house|residential|commercial/, material: "brick", k: 0.5 },
+    { key: "natural", match: /^wood$/, material: "wood", k: 0.35 },
+    { key: "landuse", match: /forest|scrub/, material: "forest", k: 0.2 },
+    { key: "landuse", match: /grass|meadow|pasture|farmland/, material: "field", k: 0.05 },
+    { key: "natural", match: /water|wetland|river|lake/, material: "water", k: 2.0 },
+    { key: "natural", match: /rock|mountain/, material: "rock", k: 1.2 },
+    { key: "landuse", match: /urban|residential/, material: "urban_mix", k: 0.6 },
+    { key: "landuse", match: /military/, material: "metal", k: 1.5 },
+    { key: "landuse", match: /cemetery|park/, material: "wood", k: 0.35 },
+    { key: "natural", match: /sand|beach/, material: "sand", k: 0.1 },
   ];
   
   for (const m of materialMap) {
@@ -160,7 +197,7 @@ function mapGeoFeatureToMaterial(props) {
       return { material: m.material, k: m.k };
     }
   }
-  return { material: "default", k: 0.1 };
+  return { material: "default", k: 0.25 };
 }
 
 let waves = [];
@@ -425,7 +462,10 @@ function emitWave(source, type="DATA", data=null, origin=null, ttl=maxRetrans){
     x:source.x, y:source.y, r:0, alpha:startAlpha, type, 
     data:data||createData(source), origin:origin||source.id, emitterId:source.id, 
     hit:{}, ttl, alphaSectors:new Array(SECTORS).fill(1), obstacleApplied:new Set(), 
-    maxRadius:maxR, startTime, lastUpdateTime:startTime 
+    maxRadius:maxR, startTime, lastUpdateTime:startTime,
+    // v1.3.0: Cumulative path tracking
+    pathMeters: new Float32Array(SECTORS).fill(0),
+    rPrev: 0
   };
   waves.push(w);
   log(`${source.id} emits ${type} seq:${data?data.seq:''} TTL=${ttl} visualRange≈${(w.maxRadius*metersPerPixel)|0} m`);
@@ -481,113 +521,93 @@ function updateWaves(){
     o.lastUpdateTime = currentTime;
 
 
-    // obstacles → sector attenuation (optimized with spatial index)
-    const waveRadius = o.r;
-    const waveBounds = {
-      minX: o.x - waveRadius,
-      minY: o.y - waveRadius,
-      maxX: o.x + waveRadius,
-      maxY: o.y + waveRadius
-    };
-    const nearbyObstacles = spatialIndex.query(waveBounds);
-    
-    for (const ob of nearbyObstacles){
-      if (o.obstacleApplied.has(ob.id)) continue;
+    // v1.3.0: Cumulative attenuation model (conditional)
+    if (useCumulativeAttenuation) {
+      const r0 = o.rPrev || 0;
+      const r1 = o.r;
+      o.rPrev = r1;
       
-      if (ob.type === 'polygon') {
-        // Polygon obstacle: check if wave intersects with polygon
-        const waveCenter = {x: o.x, y: o.y};
-        const waveBounds = {
-          minX: o.x - o.r, minY: o.y - o.r,
-          maxX: o.x + o.r, maxY: o.y + o.r
-        };
+      if (r1 > r0) {
+      // Find obstacles intersecting the annulus between r0 and r1
+      const annulusBounds = {
+        minX: o.x - r1, minY: o.y - r1,
+        maxX: o.x + r1, maxY: o.y + r1
+      };
+      const nearbyObstacles = spatialIndex.query(annulusBounds);
+      
+      for (const ob of nearbyObstacles) {
+        // Calculate incremental path lengths through obstacles
+        let deltaLenPx = 0;
         
-        // Quick bounds check
-        if (waveBounds.maxX < ob.bounds.minX || waveBounds.minX > ob.bounds.maxX ||
-            waveBounds.maxY < ob.bounds.minY || waveBounds.minY > ob.bounds.maxY) {
-          continue;
+        if (ob.type === 'polygon') {
+          // Simplified polygon intersection - estimate as average diameter
+          const bounds = ob.bounds;
+          const avgDiameter = Math.sqrt((bounds.maxX - bounds.minX) * (bounds.maxY - bounds.minY));
+          
+          // Check if annulus intersects polygon bounds  
+          const centerDist = Math.hypot((ob.bounds.minX + ob.bounds.maxX)/2 - o.x, (ob.bounds.minY + ob.bounds.maxY)/2 - o.y);
+          if (r1 >= centerDist - avgDiameter/2) {
+            deltaLenPx = avgDiameter * 0.5; // Rough estimate
+          }
+        } else {
+          // Circular obstacle: precise chord length calculation
+          deltaLenPx = estimateDeltaChordLengthPx(ob, o.x, o.y, r0, r1);
         }
         
-        // Check if wave circle intersects polygon
-        let intersects = false;
-        
-        // Check if wave center is inside polygon
-        if (polygonContainsPoint(ob, o.x, o.y)) {
-          intersects = true;
-        } else {
-          // Check if circle intersects any polygon edge
-          for (let i = 0; i < ob.points.length; i++) {
-            const p1 = ob.points[i];
-            const p2 = ob.points[(i + 1) % ob.points.length];
-            
-            // Distance from circle center to line segment
-            const A = o.x - p1.x;
-            const B = o.y - p1.y;
-            const C = p2.x - p1.x;
-            const D = p2.y - p1.y;
-            
-            const dot = A * C + B * D;
-            const lenSq = C * C + D * D;
-            let param = -1;
-            if (lenSq !== 0) param = dot / lenSq;
-            
-            let xx, yy;
-            if (param < 0) {
-              xx = p1.x;
-              yy = p1.y;
-            } else if (param > 1) {
-              xx = p2.x;
-              yy = p2.y;
-            } else {
-              xx = p1.x + param * C;
-              yy = p1.y + param * D;
-            }
-            
-            const dx = o.x - xx;
-            const dy = o.y - yy;
-            const distSq = dx * dx + dy * dy;
-            
-            if (distSq <= o.r * o.r) {
-              intersects = true;
-              break;
-            }
+        if (deltaLenPx > 0) {
+          const deltaLenM = deltaLenPx * metersPerPixel;
+          const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'default');
+          const sectors = sectorsHitByObstacle(ob, o);
+          const sharePerSector = deltaLenM / sectors.length;
+          
+          // Add cumulative path length to affected sectors
+          for (const s of sectors) {
+            o.pathMeters[s] += sharePerSector;
           }
         }
+      }
+      
+      // Recompute attenuation from cumulative path lengths
+      for (let s = 0; s < SECTORS; s++) {
+        const L = o.pathMeters[s];
+        const k = 0.25; // Average attenuation coefficient
+        const dB = Math.min(MAX_OBSTACLE_DB, 8.686 * k * L);
+        const linearFactor = Math.pow(10, -dB / 10);
+        o.alphaSectors[s] = Math.max(0.02, linearFactor); // Clamp for visibility
+      }
+      } // Close r1 > r0 condition
+    } else {
+      // Legacy attenuation model (v1.2.0 fallback)
+      const waveRadius = o.r;
+      const waveBounds = {
+        minX: o.x - waveRadius, minY: o.y - waveRadius,
+        maxX: o.x + waveRadius, maxY: o.y + waveRadius
+      };
+      const nearbyObstacles = spatialIndex.query(waveBounds);
+      
+      for (const ob of nearbyObstacles) {
+        if (o.obstacleApplied.has(ob.id)) continue;
         
-        if (intersects) {
-          // Realistic material-based exponential attenuation for polygon
-          const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'brick');
-          
-          // Calculate approximate distance inside obstacle (rough estimate using bounds)
-          const bounds = ob.bounds;
-          const d_inside = Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.5; // Approximate thickness
-          const d_meters = d_inside * metersPerPixel; // Convert to meters
-          
-          // Apply exponential attenuation: sectorAlpha *= exp(-k * d_meters)
-          const attenuation_factor = Math.exp(-k * d_meters);
-          
+        const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'default');
+        const d_meters = (ob.radius || 10) * metersPerPixel;
+        const attenuation_factor = Math.exp(-k * d_meters);
+        
+        if (ob.type === 'polygon') {
           for (let i = 0; i < SECTORS; i++) {
             o.alphaSectors[i] *= attenuation_factor;
           }
-          o.obstacleApplied.add(ob.id);
+        } else {
+          const d = dist(o, ob);
+          if (d > 1e-6 && o.r >= d - ob.radius) {
+            const th = angle(o.x, o.y, ob.x, ob.y);
+            const sinArg = Math.min(1, Math.max(-1, ob.radius / d));
+            const half = Math.asin(sinArg);
+            for (const i of sectorRange(th - half, th + half)) {
+              o.alphaSectors[i] *= attenuation_factor;
+            }
+          }
         }
-      } else {
-        // Circular obstacle with realistic material-based attenuation
-        const d = dist(o,ob); if (d<=1e-6) continue;
-        if (o.r >= d - ob.radius){
-          const th = angle(o.x,o.y,ob.x,ob.y);
-          const sinArg = Math.min(1, Math.max(-1, ob.radius / d));
-          const half = Math.asin(sinArg);
-          
-          // Material-based exponential attenuation
-          const k = ob.k || ob.absorption || getMaterialAlpha(ob.material || 'brick');
-          const d_inside = ob.radius * 2; // Diameter as rough estimate of distance through obstacle
-          const d_meters = d_inside * metersPerPixel; // Convert to meters
-          const attenuation_factor = Math.exp(-k * d_meters);
-          
-          for (const i of sectorRange(th-half, th+half)) o.alphaSectors[i] *= attenuation_factor;
-          o.obstacleApplied.add(ob.id);
-        }
+        o.obstacleApplied.add(ob.id);
       }
     }
 
@@ -1413,3 +1433,18 @@ measureToggleBtn.addEventListener('click', ()=>{
   if (!measureMode){ measurePts.length=0; measureResult.textContent=''; }
 });
 measureClearBtn.addEventListener('click', ()=>{ measurePts.length=0; measureResult.textContent=''; });
+
+// v1.3.0 Control Event Listeners
+if (cumulativeChk) {
+  cumulativeChk.addEventListener('change', () => {
+    useCumulativeAttenuation = cumulativeChk.checked;
+    debug(`Cumulative attenuation model: ${useCumulativeAttenuation ? 'ON' : 'OFF'}`);
+  });
+}
+
+if (maxAttenuationInput) {
+  maxAttenuationInput.addEventListener('input', () => {
+    MAX_OBSTACLE_DB = clamp(+maxAttenuationInput.value, 20, 80);
+    debug(`Max attenuation cap set to ${MAX_OBSTACLE_DB} dB`);
+  });
+}
