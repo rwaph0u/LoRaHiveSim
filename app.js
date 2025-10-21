@@ -1072,27 +1072,41 @@ canvas.addEventListener('mousedown', e=>{
     return;
   }
 
-  for (let i=obstacles.length-1;i>=0;i--){
-    const ob=obstacles[i];
-    if (obstacleContainsPoint(ob, m.x, m.y)) {
-      setSelected({type:'obstacle', ref:ob});
-      if (ob.type === 'polygon') {
-        // For polygons, calculate center for drag offset
-        const centerX = (ob.bounds.minX + ob.bounds.maxX) / 2;
-        const centerY = (ob.bounds.minY + ob.bounds.maxY) / 2;
-        currentDrag={type:'obstacle', ref:ob, dx:centerX-m.x, dy:centerY-m.y, isPolygon:true};
-      } else {
-        currentDrag={type:'obstacle', ref:ob, dx:ob.x-m.x, dy:ob.y-m.y};
+  // v1.3.4: Priority-based picking with modifier key support
+  const R = 15; // Click radius for hives in world units
+  
+  // Check modifier keys for forced selection mode
+  const forceObstacle = e.shiftKey; // Shift+Click forces obstacle selection
+  const forceHive = e.altKey;       // Alt+Click forces hive selection
+  
+  // 1) PRIORITY: Try hives first (unless Shift+Click forces obstacle)
+  if (!forceObstacle) {
+    for (const h of hives) {
+      if (Math.hypot(m.x - h.x, m.y - h.y) < R) {
+        setSelected({type:'hive', ref:h});
+        currentDrag = {type:'hive', ref:h, dx:h.x - m.x, dy:h.y - m.y};
+        downInfo = {type:'hive', ref:h, start:m, time:performance.now()};
+        return;
       }
-      downInfo=null; 
-      return;
     }
   }
-  for (const h of hives){
-    if (Math.hypot(m.x-h.x,m.y-h.y)<15){
-      setSelected({type:'hive', ref:h}); currentDrag={type:'hive', ref:h, dx:h.x-m.x, dy:h.y-m.y};
-      downInfo = { type:'hive', ref:h, start:m, time:performance.now() };
-      return;
+  
+  // 2) SECONDARY: Try obstacles (unless Alt+Click forces hive-only)
+  if (!forceHive) {
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      const ob = obstacles[i];
+      if (obstacleContainsPoint(ob, m.x, m.y)) {
+        setSelected({type:'obstacle', ref:ob});
+        if (ob.type === 'polygon') {
+          const centerX = (ob.bounds.minX + ob.bounds.maxX) / 2;
+          const centerY = (ob.bounds.minY + ob.bounds.maxY) / 2;
+          currentDrag = {type:'obstacle', ref:ob, dx:centerX - m.x, dy:centerY - m.y, isPolygon:true};
+        } else {
+          currentDrag = {type:'obstacle', ref:ob, dx:ob.x - m.x, dy:ob.y - m.y};
+        }
+        downInfo = null;
+        return;
+      }
     }
   }
   setSelected(null); downInfo = { type:'empty', start:m, time:performance.now() };

@@ -1,4 +1,4 @@
-# LoRaHiveSim — v1.3.3
+# LoRaHiveSim — v1.3.4
 
 > **LoRa mesh playground** with a realistic radio model (FSPL + LoRa sensitivity), **realistic material-based obstacles**, minimap, import/export, distance measurement, sharable simulation state via URL, and full bilingual UI (EN/FR).  
 > License: **MIT**
@@ -11,7 +11,7 @@ LoRaHiveSim simulates **LoRa packet propagation** between **hives (nodes)** and 
 When **realistic mode** is enabled, range is computed from **path loss (FSPL)** and **receiver sensitivity**, then converted to pixels via _Meters per pixel_.  
 **Obstacles** locally attenuate the signal by sector, possibly blocking communication.
 
-- **Version**: 1.3.3
+- **Version**: 1.3.4 (SemVer)
 - **Languages**: English / French (auto-detected, can be switched)
 - **License**: MIT
 
@@ -238,8 +238,9 @@ Nodes snap automatically if near cursor.
 
 ---
 
-## 📝 Changelog
+## � Changelog
 
+- **1.3.4** — **Priority-Based Click Selection**: CRITICAL UX FIX for hive selection inside obstacles. Implemented priority-based picking that selects hives first, then obstacles, preventing "hive doesn't react to clicks" issue when nodes are inside polygonal obstacles. Added modifier key support: Shift+Click forces obstacle selection, Alt+Click forces hive-only selection. Enhanced UI with bilingual click mode hints and improved user discoverability. Maintains backward compatibility while dramatically improving usability.
 - **1.3.3** — **ACK Reception Fix & RX Logic Enhancement**: CRITICAL FIX for "ACK visible but not received" issue by separating physical vs visual alpha arrays. Enhanced RX logic with unified `canReceive()` function ensuring DATA/ACK symmetry. Added sector interpolation for smooth reception at boundaries, standardized angle calculations with `angleFromWaveTo()`, implemented one-shot thickness handling for wave origins inside obstacles. Added `debugRxDecision()` function and epsilon hit-testing tolerance. Maintains visual continuity while ensuring physical accuracy.
 - **1.3.2** — **Attenuation Calibration Fix**: Corrected material coefficients with EU868-calibrated values (water: 2.0→1.0, brick: 0.5→0.35) to prevent excessive signal loss. Fixed legacy attenuation model to avoid repetitive \*= application that caused over-attenuation even with very low k values. Added ALPHA_MIN visibility floor and reduced MAX_OBSTACLE_DB to 35 dB for better visual clarity. Improved simulation realism and material accuracy.
 - **1.3.1** — **Angle/Sector Mapping Fix**: Critical bug fix where obstacle attenuation appeared 180° opposite to actual obstacle position. Standardized angle calculations with `angleFromWaveTo()` and `sectorIndexFromAngle()` functions, removed erroneous +Math.PI rotation, replaced Math.round() with Math.floor() for consistent sector bucketing. Improved visual accuracy and obstacle alignment.
